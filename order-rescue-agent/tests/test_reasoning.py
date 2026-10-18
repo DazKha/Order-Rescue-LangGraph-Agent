@@ -8,12 +8,14 @@ from agent.schemas import (
     AgentDecision,
     Assessment,
     BuyerIntent,
+    CaseEvent,
     Confidence,
     DecisionRoute,
     DecisionStage,
     DecisionTarget,
     DeliveryContext,
     Evidence,
+    EventType,
     Hypothesis,
     InformationRequest,
 )
@@ -256,7 +258,7 @@ def _decision_payload(stage="INITIAL", route="ASK"):
     else:
         result.update(proposed_action="ESCALATE_REVIEW", rationale="Review the case.")
     if stage == "AFTER_EVENT":
-        result.update(buyer_intent="UNKNOWN", parsed_facts={"reply": "ambiguous"})
+        result.update(buyer_intent="WANTS", parsed_facts={"reply": "wants delivery"})
     return result
 
 
@@ -268,6 +270,13 @@ def _decision_inputs():
         timestamp="2026-10-18T00:00:00Z",
     )]
     return state, evidence
+
+
+def _no_reply_event():
+    return CaseEvent(
+        case_id="OR-001", event_type=EventType.NO_REPLY,
+        event_text=None, reply_received=False, buyer_intent=BuyerIntent.UNKNOWN,
+    )
 
 
 def test_decide_initial_sends_observable_inputs_and_returns_ask():
@@ -373,3 +382,54 @@ def test_decide_after_event_rejects_missing_or_invalid_fields(mutate):
             state["delivery_context"], evidence, stage=DecisionStage.AFTER_EVENT,
             case_event=load_bi_event("OR-001"),
         )
+
+
+def test_decide_after_event_requires_raw_event_before_transport():
+    state, evidence = _decision_inputs()
+    captured = {}
+    with pytest.raises(RuntimeError):
+        DeepSeekReasoner(api_key="test-secret", transport=fake_transport(
+            _decision_payload("AFTER_EVENT", "PROPOSE_RECOVERY"), captured,
+        )).decide(state["delivery_context"], evidence, stage=DecisionStage.AFTER_EVENT)
+    assert captured == {}
+
+
+@pytest.mark.parametrize("facts", [{}, {"reply": "  "}])
+def test_decide_after_event_rejects_empty_extraction(facts):
+    state, evidence = _decision_inputs()
+    payload = _decision_payload("AFTER_EVENT", "PROPOSE_RECOVERY")
+    payload["parsed_facts"] = facts
+    with pytest.raises(RuntimeError):
+        DeepSeekReasoner(api_key="test-secret", transport=fake_transport(payload, {})).decide(
+            state["delivery_context"], evidence, stage=DecisionStage.AFTER_EVENT,
+            case_event=load_bi_event("OR-001"),
+        )
+
+
+@pytest.mark.parametrize("event", [
+    _no_reply_event(),
+    CaseEvent(case_id="OR-001", event_type=EventType.BUYER_REPLY,
+              event_text="Maybe; I am not sure.", reply_received=True,
+              buyer_intent=BuyerIntent.UNKNOWN),
+])
+def test_decide_after_event_rejects_intent_conflicting_with_unknown_event(event):
+    state, evidence = _decision_inputs()
+    payload = _decision_payload("AFTER_EVENT", "PROPOSE_RECOVERY")
+    payload["parsed_facts"] = {"reply_status": "no reply"}
+    with pytest.raises(RuntimeError) as exc:
+        DeepSeekReasoner(api_key="test-secret", transport=fake_transport(payload, {})).decide(
+            state["delivery_context"], evidence, stage=DecisionStage.AFTER_EVENT,
+            case_event=event,
+        )
+    assert "test-secret" not in str(exc.value)
+
+
+def test_decide_after_event_accepts_unknown_intent_with_no_reply_fact():
+    state, evidence = _decision_inputs()
+    payload = _decision_payload("AFTER_EVENT", "PROPOSE_RECOVERY")
+    payload.update(buyer_intent="UNKNOWN", parsed_facts={"reply_status": "no reply"})
+    decision = DeepSeekReasoner(api_key="test-secret", transport=fake_transport(payload, {})).decide(
+        state["delivery_context"], evidence, stage=DecisionStage.AFTER_EVENT,
+        case_event=_no_reply_event(),
+    )
+    assert decision.buyer_intent is BuyerIntent.UNKNOWN

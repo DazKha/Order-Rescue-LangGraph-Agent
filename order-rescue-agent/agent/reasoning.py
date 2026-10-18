@@ -18,6 +18,7 @@ from .schemas import (
     DecisionStage,
     DeliveryContext,
     Evidence,
+    EventType,
     Hypothesis,
 )
 
@@ -456,6 +457,8 @@ class DeepSeekReasoner:
         """Return a validated model proposal; policy gates remain separate."""
         if stage not in (DecisionStage.INITIAL, DecisionStage.AFTER_EVENT):
             raise RuntimeError("Invalid decision stage.")
+        if stage is DecisionStage.AFTER_EVENT and case_event is None:
+            raise RuntimeError("DeepSeek after-event decision requires a case event.")
         observed_inputs = {
             "stage": stage.value,
             "delivery_context": context.model_dump(mode="json"),
@@ -463,7 +466,7 @@ class DeepSeekReasoner:
         }
         if case_input is not None:
             observed_inputs["case_input"] = case_input.model_dump(mode="json")
-        if stage is DecisionStage.AFTER_EVENT and case_event is not None:
+        if stage is DecisionStage.AFTER_EVENT:
             observed_inputs["case_event"] = case_event.model_dump(mode="json")
 
         common = (
@@ -485,7 +488,8 @@ class DeepSeekReasoner:
             stage_prompt = (
                 "For AFTER_EVENT, extract buyer_intent (UNKNOWN, WANTS, DECLINES, or CONDITIONAL) "
                 "and parsed_facts from the raw event, update assessment, and set route to "
-                "PROPOSE_RECOVERY with proposed_action and short rationale."
+                "PROPOSE_RECOVERY with proposed_action and short rationale. Include at least one "
+                "concrete event fact. Represent ambiguous intent or no reply as UNKNOWN; do not guess."
             )
         payload = {
             "model": self.model,
@@ -535,10 +539,19 @@ class DeepSeekReasoner:
             or "buyer_intent" not in raw
             or "parsed_facts" not in raw
             or decision.buyer_intent is None
+            or not decision.parsed_facts
+            or any(not key.strip() or not value.strip() for key, value in decision.parsed_facts.items())
             or decision.proposed_action is None
             or not (decision.rationale or "").strip()
         ):
             raise RuntimeError("DeepSeek after-event decision is missing required extraction or action.")
+        if stage is DecisionStage.AFTER_EVENT:
+            observed_intent = case_event.buyer_intent
+            no_reply = case_event.event_type in {EventType.NO_REPLY, EventType.TIMEOUT} or case_event.reply_received is False
+            if (no_reply or observed_intent is BuyerIntent.UNKNOWN) and decision.buyer_intent is not BuyerIntent.UNKNOWN:
+                raise RuntimeError("DeepSeek decision inferred buyer intent without supporting event evidence.")
+            if observed_intent not in (None, BuyerIntent.UNKNOWN) and decision.buyer_intent not in (observed_intent, BuyerIntent.UNKNOWN):
+                raise RuntimeError("DeepSeek decision buyer intent conflicts with the case event.")
         return decision
 
     def assess(
