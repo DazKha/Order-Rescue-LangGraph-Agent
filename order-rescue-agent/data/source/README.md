@@ -1,5 +1,11 @@
-# BI Workbook Source Status
+# BI Workbook Alignment
 
-The requested `order_rescue_simulation_cases_v0.1.xlsx` workbook was not present in the repository or its synced `sources/` directory when implementation began. Its sheets and BI-prepared values therefore could not be inspected.
+The user supplied `order_rescue_simulation_cases_v0.1 (1).xlsx` from Downloads. The `README`, `Policy_Rules`, `Field_Dictionary`, `explain Field`, `Cases`, `Coverage`, and `Sources` sheets were inspected to align this agent.
 
-The OR-001 fixture in `data/fixtures/or_001.json` is a documented fallback based only on the observable inputs and expected workflow values explicitly included in the user-provided implementation prompt. It is not represented as BI-prepared data. The synthetic buyer reply is stored separately in `data/fixtures/or_001_reply.json` and is loaded only after the graph reaches its buyer interrupt.
+The workbook itself is not copied into the repository. Sanitized derived artifacts are kept in separate files:
+
+- `data/fixtures/bi_inputs.json` contains the 56 observable case inputs.
+- `data/fixtures/bi_events.json` contains each later event and is loaded only after the graph pauses.
+- `data/expected/bi_expected.json` contains BI's proposed labels for tests only; the graph and model do not load it.
+
+The synthetic PII marker in OR-052 was redacted from the public fixture. The simulated R01-R22 policy and expected labels are treated as evaluation guidance, not verified carrier policy.

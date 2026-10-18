@@ -5,6 +5,8 @@ from typing import Annotated, TypedDict
 
 from .schemas import (
     Assessment,
+    BiCaseInput,
+    CaseEvent,
     CaseStatus,
     DeliveryContext,
     Evidence,
@@ -32,6 +34,10 @@ def merge_events(left: list[ExecutionEvent] | None, right: Iterable[ExecutionEve
 class AgentState(TypedDict, total=False):
     case_id: str
     trigger_event: str
+    case_input: BiCaseInput
+    case_event: CaseEvent | None
+    input_issues: list[str]
+    eligibility: str
     delivery_context: DeliveryContext
     evidence: Annotated[list[Evidence], merge_evidence]
     assessment: Assessment | None
@@ -46,4 +52,6 @@ class AgentState(TypedDict, total=False):
     case_status: CaseStatus
     iteration: int
     should_ask_buyer: bool
+    should_wait_event: bool
+    event_target: str
     events: Annotated[list[ExecutionEvent], merge_events]

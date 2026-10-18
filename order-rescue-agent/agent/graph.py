@@ -8,12 +8,15 @@ from . import nodes
 from .schemas import (
     Action,
     Assessment,
+    BiCaseInput,
     BuyerIntent,
+    CaseEvent,
     CaseStatus,
     Confidence,
     DeliveryContext,
     Evidence,
     ExecutionEvent,
+    EventType as BiEventType,
     FinalRecommendation,
     Hypothesis,
     InformationRequest,
@@ -28,7 +31,7 @@ from .state import AgentState
 
 
 def _after_planning(state: AgentState) -> str:
-    return "contact_policy_gate" if state.get("should_ask_buyer") else "propose_recovery"
+    return "contact_policy_gate" if state.get("should_wait_event") else "propose_recovery"
 
 
 def _after_contact_policy(state: AgentState) -> str:
@@ -36,9 +39,14 @@ def _after_contact_policy(state: AgentState) -> str:
     return "generate_question" if result and result.decision.value == "PERMITTED" else "propose_recovery"
 
 
+def _after_input_validation(state: AgentState) -> str:
+    return "finalize" if state.get("recovery_policy_result") is not None else "build_evidence"
+
+
 def create_graph(checkpointer: InMemorySaver | None = None, *, reasoner: Reasoner | None = None):
     """Compile the single-case workflow with an in-memory checkpoint by default."""
     builder = StateGraph(AgentState)
+    builder.add_node("validate_input", nodes.validate_input)
     builder.add_node("build_evidence", nodes.build_evidence)
     assessment_node = nodes.assess_case if reasoner is None else lambda state: nodes.assess_case(state, reasoner)
     builder.add_node("assess_case", assessment_node)
@@ -51,7 +59,8 @@ def create_graph(checkpointer: InMemorySaver | None = None, *, reasoner: Reasone
     builder.add_node("recovery_policy_gate", nodes.recovery_policy_gate)
     builder.add_node("finalize", nodes.finalize)
 
-    builder.add_edge(START, "build_evidence")
+    builder.add_edge(START, "validate_input")
+    builder.add_conditional_edges("validate_input", _after_input_validation)
     builder.add_edge("build_evidence", "assess_case")
     builder.add_edge("assess_case", "plan_information")
     builder.add_conditional_edges("plan_information", _after_planning)
@@ -67,12 +76,15 @@ def create_graph(checkpointer: InMemorySaver | None = None, *, reasoner: Reasone
             allowed_msgpack_modules=[
                 Action,
                 Assessment,
+                BiCaseInput,
                 BuyerIntent,
+                CaseEvent,
                 CaseStatus,
                 Confidence,
                 DeliveryContext,
                 Evidence,
                 ExecutionEvent,
+                BiEventType,
                 FinalRecommendation,
                 Hypothesis,
                 InformationRequest,

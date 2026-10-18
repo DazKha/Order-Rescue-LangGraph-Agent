@@ -24,4 +24,4 @@ All displayed case data and communication are simulated. Explainable event summa
 
 The repository also contains a separate, minimal Python implementation of the synthetic Order Rescue workflow. It uses LangGraph checkpointing and `interrupt()` / `Command(resume=...)` for the simulated buyer pause, performs reassessment and deterministic policy checks, and never executes logistics actions.
 
-See [`order-rescue-agent/README.md`](order-rescue-agent/README.md) for setup, `python demo.py --auto`, tests, mock boundaries, and the missing BI workbook note. The existing React Observatory remains unchanged.
+See [`order-rescue-agent/README.md`](order-rescue-agent/README.md) for setup, `python demo.py --auto`, the 56-case BI schema/event alignment, tests, and mock boundaries. The Python agent remains separate from the React Observatory.

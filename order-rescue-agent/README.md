@@ -1,13 +1,22 @@
-# Order Rescue Agent V0
+# Order Rescue LangGraph Agent
 
-A minimal LangGraph workflow for synthetic failed-delivery cases. By default, assessment uses deterministic mock reasoning. An optional DeepSeek provider can perform the structured assessments; information planning, candidate actions, and the safety policy remain deterministic. The agent asks one buyer clarification when it can change the recovery action, pauses with a LangGraph interrupt, reassesses after a simulated reply, and applies illustrative policy before publishing a recommendation.
+A minimal, stateful LangGraph workflow for the synthetic failed-delivery cases in the BI workbook. It validates case input, assesses evidence, asks a buyer or authorized actor for clarification when useful, pauses at an interrupt, reassesses after a later event, and gates recommendations through deterministic policy checks. It never sends real messages, dispatches a courier, changes an address/payment method, issues refunds, or starts returns.
 
-## Requirements and setup
+## BI schema coverage
 
-- Python 3.11 or newer
-- LangGraph 1.x, Pydantic 2.x, and pytest 8.x
+The agent was aligned against all 56 workbook cases and the `Cases`, `Policy_Rules`, `Field_Dictionary`, and related sheets. Typed input fields mirror the case input columns; the enums preserve BI's hypothesis, action, buyer intent, return state, eligibility, and policy decision vocabularies.
 
-From this directory:
+The test data is separated by role:
+
+- `data/fixtures/bi_inputs.json` contains observable inputs only.
+- `data/fixtures/bi_events.json` stores delayed buyer, seller, timeout, and operational events; loaders expose these only after an interrupt.
+- `data/expected/bi_expected.json` contains proposed BI labels for tests. It is not imported into the graph or sent to DeepSeek.
+
+The source workbook is not copied into this repository. OR-052's synthetic PII marker is redacted in the derived input fixture. BI labels and the simulated R01-R22 policies are treated as evaluation guidance, not verified carrier policy. See `data/source/README.md` for provenance details.
+
+## Setup
+
+Requires Python 3.11+, LangGraph 1.x, Pydantic 2.x, and pytest 8.x.
 
 ```sh
 python -m venv .venv
@@ -15,80 +24,53 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Run the interactive demo:
+## Run a case
 
-```sh
-python demo.py
-```
-
-Run with the synthetic buyer reply fixture:
+Run the OR-001 interrupt/resume flow using its synthetic BI event:
 
 ```sh
 python demo.py --auto
 ```
 
-To use DeepSeek for both assessments, provide the key through the process environment and opt in:
+Select another case with `--case`, for example:
+
+```sh
+python demo.py --case OR-038 --auto
+```
+
+If the case reaches another interrupt after the fixture event, the CLI leaves the checkpoint waiting and shows the next requested information. Provide a simulated reply interactively or pass one with `--reply TEXT`.
+
+To use DeepSeek for structured assessments, provide `DEEPSEEK_API_KEY` through the process environment and opt in:
 
 ```sh
 export DEEPSEEK_API_KEY="your-key"
 python demo.py --auto --llm
 ```
 
-The default model is `deepseek-flash`; set `DEEPSEEK_MODEL` to change it. The agent sends only the current case context and evidence to the provider. Do not put API keys in source files or fixtures.
-
-Or provide a simulated response directly:
-
-```sh
-python demo.py --reply "I still want delivery."
-```
-
-Run the test suite:
-
-```sh
-python -m pytest -q
-```
-
-The CLI options are `--auto`, `--reply TEXT`, and `--llm`.
+Set `DEEPSEEK_MODEL` to override the default model. The provider only performs evidence assessment. Information planning, action choice, and policy gates remain deterministic. The API key must not be stored in source files or fixtures.
 
 ## Architecture
 
-- `agent/schemas.py` defines the Pydantic domain models and explicit enums.
-- `agent/state.py` defines the LangGraph `TypedDict` shared state and deduplicating evidence/event reducers.
-- `agent/reasoning.py` contains the replaceable `Reasoner` interface and deterministic V0 implementation.
-- `agent/reasoning.py` also contains the opt-in DeepSeek structured-output client; provider output is validated against the Pydantic assessment schema and evidence references. When confirmed buyer intent resolves the only missing item for a temporary availability conflict, an evidence-based guard clears that stale gap and sets confidence to HIGH.
-- `agent/nodes.py` implements the evidence, assessment, information planning, contact gate, question, interrupt, parsing, proposal, recovery gate, and finalization nodes.
-- `agent/policy.py` contains pure, rule-ID-based illustrative policy functions.
-- `agent/graph.py` compiles the single stateful workflow with an in-memory checkpointer keyed by stable case ID.
-- `agent/events.py` creates structured, explainable execution events for later observability streaming.
-- `data/fixtures/or_001.json` holds only observable inputs. The reply fixture is isolated in `or_001_reply.json` and is read only after the graph reaches its interrupt.
+- `agent/schemas.py` defines typed BI input/event models and domain enums.
+- `agent/bi_adapter.py` validates required fields, timestamps, and registered input enums.
+- `agent/state.py` defines the shared LangGraph state and evidence/event reducers.
+- `agent/fixtures.py` loads case inputs and later events separately.
+- `agent/reasoning.py` provides deterministic assessment and an optional DeepSeek JSON client with Pydantic and evidence-reference validation.
+- `agent/nodes.py` implements validation, evidence construction, assessment, information planning, interrupt/resume, reassessment, recommendation, policy gate, and finalization.
+- `agent/policy.py` implements deterministic illustrative policy rules with rule IDs.
+- `agent/graph.py` compiles the checkpointed workflow. The default in-memory checkpoint lasts only for the current process.
 
-## Implemented
+## Verification
 
-- OR-001 starts with a `DELIVERY_FAILED` event and `RECIPIENT_UNAVAILABLE` status, assesses `TEMP_AVAILABILITY_CONFLICT` at MEDIUM confidence, identifies missing `buyer_intent`, requests clarification, and enters `WAITING_FOR_BUYER`.
-- A confirming simulated reply is preserved as evidence, parsed into buyer intent, and triggers a second evidence build and assessment before proposing `STANDARD_REATTEMPT`.
-- A recovery policy gate checks action vocabulary, return lifecycle, retry limit, and unsupported-refusal handling before `finalize` can publish a recommendation.
-- Ambiguous replies remain unknown and route to human review after the one-question limit.
-- Clear negative intent, including “I don't want delivery” and “I no longer want delivery,” produces `NO_ACTION`; ambiguous or contradictory replies stay unknown for review.
-- DeepSeek output with unregistered `missing_information` values is rejected by schema validation rather than entering workflow routing.
-- Execution events include lifecycle, assessment, clarification, buyer reply, policy, state transition, and recommendation events.
-- The final recommendation is decision support only; it reports `executed=False` and has no side effects.
+Run the test suite and syntax check:
 
-## Mocked and not implemented
+```sh
+python -m pytest -q
+python -m py_compile agent/*.py demo.py
+```
 
-- The BI workbook `data/source/order_rescue_simulation_cases_v0.1.xlsx` was unavailable. `data/source/README.md` records this, and the OR-001 fixture is a fallback based on the user-supplied prompt, not BI-prepared data.
-- The default reasoning, reply classification, delivery context, buyer interaction, and demo policy are deterministic and synthetic. The optional DeepSeek path makes external model calls for assessment only; it does not control policy or actions. Demo rules are not verified Shopee/SPX rules.
-- There is no durable database, real messaging, logistics integration, courier dispatch, address modification, refund, or return execution.
-- The in-memory checkpointer preserves state only for the lifetime of the running process; it does not survive restarts.
+The tests compare initial and resumed assessment/action/policy fields against the separate expected labels for all 56 BI cases. They also verify schema separation, hidden-event handling, invalid-input gates, evidence isolation, and the optional LLM request boundary. Use `python demo.py --auto` to inspect the OR-001 flow.
 
-## Validation performed
+## Limits
 
-- `.venv/bin/python -m pytest -q tests` — 22 tests passed.
-- `.venv/bin/python -m compileall -q agent demo.py` — passed.
-- `.venv/bin/python demo.py --auto` — completed the full synthetic interrupt/resume flow and returned a permitted `STANDARD_REATTEMPT` recommendation with `Executed: no`.
-- `DEEPSEEK_API_KEY=<provided key> .venv/bin/python demo.py --auto --llm` — live provider smoke completed both assessments; the resumed assessment reached HIGH confidence, deterministic policy returned PERMITTED, and the recommendation remained unexecuted.
-
-The API key was supplied through the process environment for the live smoke and was not written into project files.
-
-## Next steps
-
-When the BI workbook becomes available, inspect the listed sheets, reconcile vocabulary and policy differences explicitly, and update the fixtures/tests without passing expected labels into the reasoning node. A production-facing iteration would need an approved durable checkpoint store, authenticated service boundary, real policy ownership, and a separately reviewed integration plan.
+This is synthetic decision support. BI's illustrative policies and labels are not authorized operational rules. The default checkpointer is in memory, and there is no production service boundary, durable state store, real buyer messaging, carrier integration, or logistics side effect.

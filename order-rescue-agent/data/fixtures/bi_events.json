@@ -1,0 +1,378 @@
+[
+  {
+    "case_id": "OR-001",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Vẫn muốn nhận, giao lại giúp mình.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-002",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Vẫn muốn nhận, sau 18h hằng ngày mình mới về.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": "sau 18:00"
+  },
+  {
+    "case_id": "OR-003",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Vẫn muốn nhận nhưng thứ Hai tuần sau mình mới về.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": "thứ Hai tuần sau"
+  },
+  {
+    "case_id": "OR-004",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Giao lại thứ Hai nhé.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": "ngày làm việc"
+  },
+  {
+    "case_id": "OR-005",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Vẫn muốn nhận, người nhà có thể nhận hộ.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": "người nhà nhận hộ"
+  },
+  {
+    "case_id": "OR-006",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Mình xuống sảnh nhận được, vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": "nhận tại sảnh"
+  },
+  {
+    "case_id": "OR-007",
+    "event_type": "NO_REPLY",
+    "event_text": null,
+    "reply_received": false,
+    "buyer_intent": "UNKNOWN",
+    "availability": null
+  },
+  {
+    "case_id": "OR-008",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Còn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-009",
+    "event_type": "NO_REPLY",
+    "event_text": null,
+    "reply_received": false,
+    "buyer_intent": "UNKNOWN",
+    "availability": null
+  },
+  {
+    "case_id": "OR-010",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Mình vừa có sóng lại, vẫn muốn nhận nhé.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-011",
+    "event_type": "SELLER_UPDATE",
+    "event_text": "Seller xác nhận lại SĐT đúng của buyer (mô phỏng).",
+    "reply_received": true,
+    "buyer_intent": "UNKNOWN",
+    "availability": null
+  },
+  {
+    "case_id": "OR-012",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-013",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Mình ở nhà cả ngày, máy không có cuộc gọi nào. Vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-014",
+    "event_type": "TIMEOUT",
+    "event_text": null,
+    "reply_received": false,
+    "buyer_intent": "UNKNOWN",
+    "availability": null
+  },
+  {
+    "case_id": "OR-015",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Mình vẫn muốn nhận đơn này!",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-016",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Mình vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-017",
+    "event_type": "BUYER_REPLY_LATE",
+    "event_text": "Xin lỗi mình mới thấy tin, vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-018",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Cạnh tiệm tạp hóa đầu hẻm, nhà cuối hẻm bên phải. Vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-019",
+    "event_type": "NO_REPLY",
+    "event_text": null,
+    "reply_received": false,
+    "buyer_intent": "UNKNOWN",
+    "availability": null
+  },
+  {
+    "case_id": "OR-020",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-021",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Đúng rồi, ghi theo tên xã cũ. Cạnh chợ xã, vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-022",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Số 45, sau cây xăng, vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-023",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Còn muốn nhận nhưng giao qua địa chỉ khác giúp mình nhé.",
+    "reply_received": true,
+    "buyer_intent": "CONDITIONAL",
+    "availability": null
+  },
+  {
+    "case_id": "OR-024",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Mình chuyển nhà rồi, giao qua địa chỉ mới nhé.",
+    "reply_received": true,
+    "buyer_intent": "CONDITIONAL",
+    "availability": null
+  },
+  {
+    "case_id": "OR-025",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Block B, căn B-1205. Vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-026",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Nhà sau trường mầm non, vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-027",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Đúng, đơn quà. Mình sẽ báo người nhận, vẫn muốn giao.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-028",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-029",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-030",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Giảm 30% thì mình nhận.",
+    "reply_received": true,
+    "buyer_intent": "CONDITIONAL",
+    "availability": null
+  },
+  {
+    "case_id": "OR-031",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-032",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Được, mai mình chuẩn bị đủ tiền.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-033",
+    "event_type": "NO_REPLY",
+    "event_text": null,
+    "reply_received": false,
+    "buyer_intent": "UNKNOWN",
+    "availability": null
+  },
+  {
+    "case_id": "OR-034",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-035",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-036",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-037",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Hoàn tiền cho tôi ngay, không cần giao nữa.",
+    "reply_received": true,
+    "buyer_intent": "DECLINES",
+    "availability": null
+  },
+  {
+    "case_id": "OR-038",
+    "event_type": "DISRUPTION_RESOLVED",
+    "event_text": "Ops: gián đoạn đã gỡ, tuyến hoạt động lại.",
+    "reply_received": true,
+    "buyer_intent": "UNKNOWN",
+    "availability": null
+  },
+  {
+    "case_id": "OR-039",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-040",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-041",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Vẫn muốn nhận nhé.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-042",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-043",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Vẫn muốn nhận, khi nào hết ngập thì giao.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": "sau khi hết ngập"
+  },
+  {
+    "case_id": "OR-044",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-045",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-046",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-047",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-048",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Vẫn muốn nhận.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-049",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Vẫn muốn nhận!",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-050",
+    "event_type": "SELLER_REPLY",
+    "event_text": "Seller xác nhận: đồng ý giao lại.",
+    "reply_received": true,
+    "buyer_intent": "WANTS",
+    "availability": null
+  },
+  {
+    "case_id": "OR-051",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-052",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-053",
+    "event_type": "BUYER_REPLY",
+    "event_text": "Còn muốn nhận, giao đúng 18:00 hôm nay, không đúng giờ thì hủy.",
+    "reply_received": true,
+    "buyer_intent": "CONDITIONAL",
+    "availability": "18:00 hôm nay"
+  },
+  {
+    "case_id": "OR-054",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-055",
+    "event_type": null
+  },
+  {
+    "case_id": "OR-056",
+    "event_type": null
+  }
+]
