@@ -38,16 +38,20 @@ Select another case with `--case`, for example:
 python demo.py --case OR-038 --auto
 ```
 
-If the case reaches another interrupt after the fixture event, the CLI leaves the checkpoint waiting and shows the next requested information. Provide a simulated reply interactively or pass one with `--reply TEXT`.
+If the case reaches another interrupt after the fixture event, the CLI leaves the checkpoint waiting and shows the next requested information. Provide a simulated reply interactively or pass one with `--reply TEXT`. The default run uses the deterministic mock reasoner.
 
-To use DeepSeek for structured assessments, provide `DEEPSEEK_API_KEY` through the process environment and opt in:
+To opt in to DeepSeek structured decisions, provide `DEEPSEEK_API_KEY` through the process environment and pass `--llm`:
 
 ```sh
 export DEEPSEEK_API_KEY="your-key"
 python demo.py --auto --llm
 ```
 
-Set `DEEPSEEK_MODEL` to override the default model. The provider only performs evidence assessment. Information planning, action choice, and policy gates remain deterministic. The API key must not be stored in source files or fixtures.
+Set `DEEPSEEK_MODEL` to override the default model. Without `--llm`, the deterministic mock path remains active. The decision provider is called at two bounded points: initially, it assesses current evidence and selects a route; after a simulated event, it extracts event intent/facts, reassesses, and may propose a candidate recovery action. The only initial routes are `ASK`, `WAIT_FOR_EVENT`, and `PROPOSE_RECOVERY`. An `ASK` or `WAIT_FOR_EVENT` route can target the buyer, seller, or operations (`BUYER`, `SELLER`, `OPS`).
+
+The CLI displays the selected route, parsed event intent, candidate action, policy result, and final `Executed: no` status. It keeps the synthetic buyer event visible but does not display request headers, API key values, or full prompts. Provider output is only a recommendation candidate: deterministic contact and recovery policy gates decide whether the workflow can continue or publish a recommendation. Validation, eligibility, stale/duplicate input handling, and other deterministic policy gates retain authority over the flow. No final recommendation is ever executed: there is no messaging, dispatch, address/payment change, refund, or return side effect.
+
+The React Observatory remains disconnected from this Python agent; its UI and the Python workflow are separate implementations. The API key must not be stored in source files or fixtures.
 
 ## Architecture
 
@@ -55,7 +59,7 @@ Set `DEEPSEEK_MODEL` to override the default model. The provider only performs e
 - `agent/bi_adapter.py` validates required fields, timestamps, and registered input enums.
 - `agent/state.py` defines the shared LangGraph state and evidence/event reducers.
 - `agent/fixtures.py` loads case inputs and later events separately.
-- `agent/reasoning.py` provides deterministic assessment and an optional DeepSeek JSON client with Pydantic and evidence-reference validation.
+- `agent/reasoning.py` provides deterministic mock decisions and an optional DeepSeek JSON client with Pydantic and evidence-reference validation.
 - `agent/nodes.py` implements validation, evidence construction, assessment, information planning, interrupt/resume, reassessment, recommendation, policy gate, and finalization.
 - `agent/policy.py` implements deterministic illustrative policy rules with rule IDs.
 - `agent/graph.py` compiles the checkpointed workflow. The default in-memory checkpoint lasts only for the current process.
