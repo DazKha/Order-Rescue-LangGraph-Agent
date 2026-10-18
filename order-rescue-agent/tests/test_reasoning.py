@@ -1,8 +1,22 @@
 import json
 import pytest
+from pydantic import ValidationError
 
 from agent.reasoning import DeepSeekReasoner
-from agent.schemas import Confidence, DeliveryContext, Evidence, Hypothesis
+from agent.schemas import (
+    Action,
+    AgentDecision,
+    Assessment,
+    BuyerIntent,
+    Confidence,
+    DecisionRoute,
+    DecisionStage,
+    DecisionTarget,
+    DeliveryContext,
+    Evidence,
+    Hypothesis,
+    InformationRequest,
+)
 from agent.fixtures import load_bi_case, load_bi_event
 
 
@@ -144,3 +158,63 @@ def test_deepseek_receives_bi_inputs_but_not_hidden_events_or_expected_labels():
     assert hidden_event.event_text not in calls[0]["messages"][1]["content"]
     assert "1_hypothesis" not in calls[0]["messages"][1]["content"]
     assert "expected_action" not in calls[0]["messages"][1]["content"]
+
+
+def test_agent_decision_accepts_initial_buyer_question():
+    decision = AgentDecision(
+        stage=DecisionStage.INITIAL,
+        assessment=Assessment(
+            hypothesis=Hypothesis.TEMP_AVAILABILITY_CONFLICT,
+            confidence=Confidence.MEDIUM,
+            missing_information=["buyer_intent"],
+            evidence_refs=["OR-001:courier-note"],
+            summary="Buyer intent is unknown.",
+        ),
+        route=DecisionRoute.ASK,
+        target=DecisionTarget.BUYER,
+        information_request=InformationRequest(
+            question="Do you still want delivery?",
+            purpose="Confirm buyer intent.",
+        ),
+    )
+    assert decision.route is DecisionRoute.ASK
+
+
+def test_agent_decision_accepts_unknown_after_event_intent():
+    decision = AgentDecision(
+        stage=DecisionStage.AFTER_EVENT,
+        assessment=Assessment(
+            hypothesis=Hypothesis.BUYER_INTENT_UNCERTAIN,
+            confidence=Confidence.LOW,
+            missing_information=["buyer_intent"],
+            evidence_refs=["OR-001:event:BUYER_REPLY:1"],
+            summary="The reply is ambiguous.",
+        ),
+        route=DecisionRoute.PROPOSE_RECOVERY,
+        buyer_intent=BuyerIntent.UNKNOWN,
+        proposed_action=Action.ESCALATE_REVIEW,
+        rationale="Intent remains unclear.",
+    )
+    assert decision.buyer_intent is BuyerIntent.UNKNOWN
+
+
+def test_agent_decision_rejects_unregistered_route():
+    payload = {
+        "stage": "INITIAL",
+        "assessment": {
+            "hypothesis": "TEMP_AVAILABILITY_CONFLICT",
+            "confidence": "MEDIUM",
+            "missing_information": ["buyer_intent"],
+            "evidence_refs": ["OR-001:courier-note"],
+            "summary": "Buyer intent is unknown.",
+        },
+        "route": "CALL_ANY_NODE",
+        "target": "BUYER",
+        "information_request": {
+            "question": "Do you still want delivery?",
+            "purpose": "Confirm buyer intent.",
+            "simulated": True,
+        },
+    }
+    with pytest.raises(ValidationError):
+        AgentDecision.model_validate(payload)

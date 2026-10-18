@@ -5,6 +5,7 @@ from typing import Annotated, TypedDict
 
 from .schemas import (
     Assessment,
+    AgentDecision,
     BiCaseInput,
     CaseEvent,
     CaseStatus,
@@ -41,6 +42,7 @@ class AgentState(TypedDict, total=False):
     delivery_context: DeliveryContext
     evidence: Annotated[list[Evidence], merge_evidence]
     assessment: Assessment | None
+    llm_decision: AgentDecision | None
     missing_information: list[str]
     information_request: InformationRequest | None
     buyer_reply: str | None

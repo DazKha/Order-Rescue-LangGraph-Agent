@@ -29,6 +29,23 @@ class Confidence(StrEnum):
     HIGH = "HIGH"
 
 
+class DecisionStage(StrEnum):
+    INITIAL = "INITIAL"
+    AFTER_EVENT = "AFTER_EVENT"
+
+
+class DecisionRoute(StrEnum):
+    ASK = "ASK"
+    WAIT_FOR_EVENT = "WAIT_FOR_EVENT"
+    PROPOSE_RECOVERY = "PROPOSE_RECOVERY"
+
+
+class DecisionTarget(StrEnum):
+    BUYER = "BUYER"
+    SELLER = "SELLER"
+    OPS = "OPS"
+
+
 class Hypothesis(StrEnum):
     TEMP_AVAILABILITY_CONFLICT = "TEMP_AVAILABILITY_CONFLICT"
     ACCESS_RESTRICTION = "ACCESS_RESTRICTION"
@@ -190,6 +207,19 @@ class InformationRequest(DomainModel):
     question: str
     purpose: str
     simulated: bool = True
+
+
+class AgentDecision(DomainModel):
+    stage: DecisionStage
+    assessment: Assessment
+    route: DecisionRoute
+    target: DecisionTarget | None = None
+    information_request: InformationRequest | None = None
+    buyer_intent: BuyerIntent | None = None
+    parsed_facts: dict[str, str] = Field(default_factory=dict)
+    proposed_action: Action | None = None
+    rationale: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
 
 
 class PolicyRule(DomainModel):
