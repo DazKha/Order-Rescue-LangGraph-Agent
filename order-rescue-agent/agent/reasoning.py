@@ -8,10 +8,14 @@ from urllib.request import Request, urlopen
 from pydantic import ValidationError
 
 from .schemas import (
+    AgentDecision,
     Assessment,
     BiCaseInput,
     BuyerIntent,
+    CaseEvent,
     Confidence,
+    DecisionRoute,
+    DecisionStage,
     DeliveryContext,
     Evidence,
     Hypothesis,
@@ -28,6 +32,20 @@ class Reasoner(Protocol):
         *,
         case_input: BiCaseInput | None = None,
     ) -> Assessment: ...
+
+
+class DecisionReasoner(Protocol):
+    """Provider for a structured decision at one bounded workflow stage."""
+
+    def decide(
+        self,
+        context: DeliveryContext,
+        evidence: list[Evidence],
+        *,
+        stage: DecisionStage,
+        case_input: BiCaseInput | None = None,
+        case_event: CaseEvent | None = None,
+    ) -> AgentDecision: ...
 
 
 class DeterministicMockReasoner:
@@ -425,6 +443,103 @@ class DeepSeekReasoner:
         self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
         self.timeout = timeout
         self.transport = transport or _post_json
+
+    def decide(
+        self,
+        context: DeliveryContext,
+        evidence: list[Evidence],
+        *,
+        stage: DecisionStage,
+        case_input: BiCaseInput | None = None,
+        case_event: CaseEvent | None = None,
+    ) -> AgentDecision:
+        """Return a validated model proposal; policy gates remain separate."""
+        if stage not in (DecisionStage.INITIAL, DecisionStage.AFTER_EVENT):
+            raise RuntimeError("Invalid decision stage.")
+        observed_inputs = {
+            "stage": stage.value,
+            "delivery_context": context.model_dump(mode="json"),
+            "evidence": [item.model_dump(mode="json") for item in evidence],
+        }
+        if case_input is not None:
+            observed_inputs["case_input"] = case_input.model_dump(mode="json")
+        if stage is DecisionStage.AFTER_EVENT and case_event is not None:
+            observed_inputs["case_event"] = case_event.model_dump(mode="json")
+
+        common = (
+            "Return exactly one AgentDecision JSON object. Required fields: stage, assessment, "
+            "route. assessment requires hypothesis, confidence, missing_information, evidence_refs, "
+            "summary. Use only supplied evidence IDs in assessment.evidence_refs and evidence_refs. "
+            "Do not invent observations. Routes are ASK, WAIT_FOR_EVENT, PROPOSE_RECOVERY. "
+            "Actions are CLARIFY, STANDARD_REATTEMPT, HOLD_DISRUPTION, ESCALATE_REVIEW, NO_ACTION. "
+            "The action is only a candidate; do not evaluate policy, authorize execution, or supply "
+            "a final recommendation."
+        )
+        if stage is DecisionStage.INITIAL:
+            stage_prompt = (
+                "For INITIAL, assess current evidence and select one route. ASK requires target "
+                "(BUYER, SELLER, or OPS) and information_request with a question and purpose. "
+                "WAIT_FOR_EVENT requires target. PROPOSE_RECOVERY requires proposed_action and rationale."
+            )
+        else:
+            stage_prompt = (
+                "For AFTER_EVENT, extract buyer_intent (UNKNOWN, WANTS, DECLINES, or CONDITIONAL) "
+                "and parsed_facts from the raw event, update assessment, and set route to "
+                "PROPOSE_RECOVERY with proposed_action and short rationale."
+            )
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": common + " " + stage_prompt},
+                {"role": "user", "content": json.dumps(observed_inputs, ensure_ascii=False)},
+            ],
+            "response_format": {"type": "json_object"},
+            "thinking": {"type": "disabled"},
+            "temperature": 0,
+            "max_tokens": 1024,
+            "stream": False,
+        }
+        try:
+            response = self.transport(
+                "https://api.deepseek.com/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                timeout=self.timeout,
+            )
+            choice = response["choices"][0]
+            if choice["finish_reason"] != "stop":
+                raise ValueError("incomplete response")
+            raw = json.loads(choice["message"]["content"])
+            decision = AgentDecision.model_validate(raw)
+        except Exception:
+            raise RuntimeError("DeepSeek decision request or response failed validation.") from None
+
+        if decision.stage is not stage:
+            raise RuntimeError("DeepSeek decision stage did not match the request.")
+        known_ids = {item.evidence_id for item in evidence}
+        if not set(decision.assessment.evidence_refs).issubset(known_ids) or not set(decision.evidence_refs).issubset(known_ids):
+            raise RuntimeError("DeepSeek decision referenced evidence that was not provided.")
+        if stage is DecisionStage.INITIAL:
+            if decision.route is DecisionRoute.ASK:
+                request = decision.information_request
+                if decision.target is None or request is None or not request.question.strip() or not request.purpose.strip():
+                    raise RuntimeError("DeepSeek ASK decision is missing a target or question.")
+            elif decision.route is DecisionRoute.WAIT_FOR_EVENT:
+                if decision.target is None:
+                    raise RuntimeError("DeepSeek WAIT_FOR_EVENT decision is missing a target.")
+            elif decision.proposed_action is None or not (decision.rationale or "").strip():
+                raise RuntimeError("DeepSeek recovery decision is missing an action or rationale.")
+        elif (
+            decision.route is not DecisionRoute.PROPOSE_RECOVERY
+            or not isinstance(raw, dict)
+            or "buyer_intent" not in raw
+            or "parsed_facts" not in raw
+            or decision.buyer_intent is None
+            or decision.proposed_action is None
+            or not (decision.rationale or "").strip()
+        ):
+            raise RuntimeError("DeepSeek after-event decision is missing required extraction or action.")
+        return decision
 
     def assess(
         self, context: DeliveryContext, evidence: list[Evidence], *, case_input: BiCaseInput | None = None

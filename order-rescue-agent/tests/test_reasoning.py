@@ -218,3 +218,158 @@ def test_agent_decision_rejects_unregistered_route():
     }
     with pytest.raises(ValidationError):
         AgentDecision.model_validate(payload)
+
+
+def fake_transport(response_json, captured):
+    def send(url, *, headers, body, timeout):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["request"] = json.loads(body)
+        return {
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {"content": json.dumps(response_json)},
+            }]
+        }
+    return send
+
+
+def _decision_payload(stage="INITIAL", route="ASK"):
+    result = {
+        "stage": stage,
+        "assessment": {
+            "hypothesis": "TEMP_AVAILABILITY_CONFLICT",
+            "confidence": "MEDIUM",
+            "missing_information": ["buyer_intent"],
+            "evidence_refs": ["OR-001:delivery-status"],
+            "summary": "Buyer intent is unknown.",
+        },
+        "route": route,
+        "evidence_refs": ["OR-001:delivery-status"],
+    }
+    if route == "ASK":
+        result.update(target="BUYER", information_request={
+            "question": "Do you still want delivery?", "purpose": "Confirm intent."
+        })
+    elif route == "WAIT_FOR_EVENT":
+        result["target"] = "OPS"
+    else:
+        result.update(proposed_action="ESCALATE_REVIEW", rationale="Review the case.")
+    if stage == "AFTER_EVENT":
+        result.update(buyer_intent="UNKNOWN", parsed_facts={"reply": "ambiguous"})
+    return result
+
+
+def _decision_inputs():
+    state = load_bi_case("OR-001")
+    evidence = [Evidence(
+        evidence_id="OR-001:delivery-status", kind="delivery_status",
+        value="RECIPIENT_UNAVAILABLE", provenance="synthetic_delivery_event",
+        timestamp="2026-10-18T00:00:00Z",
+    )]
+    return state, evidence
+
+
+def test_decide_initial_sends_observable_inputs_and_returns_ask():
+    captured = {}
+    state, evidence = _decision_inputs()
+    result = DeepSeekReasoner(api_key="test-secret", transport=fake_transport(
+        _decision_payload(), captured,
+    )).decide(state["delivery_context"], evidence, stage=DecisionStage.INITIAL,
+              case_input=state["case_input"])
+
+    assert isinstance(result, AgentDecision)
+    assert result.route is DecisionRoute.ASK
+    assert captured["url"] == "https://api.deepseek.com/chat/completions"
+    assert captured["request"]["stream"] is False
+    user = json.loads(captured["request"]["messages"][1]["content"])
+    assert user["stage"] == "INITIAL"
+    assert user["case_input"]["case_id"] == "OR-001"
+    assert user["evidence"][0]["evidence_id"] == "OR-001:delivery-status"
+    assert "case_event" not in user
+
+
+def test_decide_after_event_sends_raw_event_and_returns_candidate():
+    captured = {}
+    state, evidence = _decision_inputs()
+    event = load_bi_event("OR-001")
+    result = DeepSeekReasoner(api_key="test-secret", transport=fake_transport(
+        _decision_payload("AFTER_EVENT", "PROPOSE_RECOVERY"), captured,
+    )).decide(state["delivery_context"], evidence, stage=DecisionStage.AFTER_EVENT,
+              case_input=state["case_input"], case_event=event)
+
+    assert isinstance(result, AgentDecision)
+    assert result.proposed_action is Action.ESCALATE_REVIEW
+    user = json.loads(captured["request"]["messages"][1]["content"])
+    assert user["stage"] == "AFTER_EVENT"
+    assert user["case_event"]["event_text"] == event.event_text
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda p: p.update(route="CALL_ANY_NODE"),
+    lambda p: p.pop("target"),
+    lambda p: p.pop("information_request"),
+    lambda p: p["assessment"].update(evidence_refs=["unknown-id"]),
+    lambda p: p.update(evidence_refs=["unknown-id"]),
+    lambda p: p.update(stage="AFTER_EVENT"),
+])
+def test_decide_rejects_invalid_or_unsupported_results_without_leaking_secret(mutate):
+    payload = _decision_payload()
+    mutate(payload)
+    state, evidence = _decision_inputs()
+    reasoner = DeepSeekReasoner(api_key="test-secret", transport=fake_transport(payload, {}))
+    with pytest.raises(RuntimeError) as exc:
+        reasoner.decide(state["delivery_context"], evidence, stage=DecisionStage.INITIAL)
+    assert "test-secret" not in str(exc.value)
+    assert "Authorization" not in str(exc.value)
+
+
+def test_decide_rejects_malformed_json_without_leaking_secret():
+    def send(url, *, headers, body, timeout):
+        return {"choices": [{"finish_reason": "stop", "message": {
+            "content": '{"secret":"test-secret",',
+        }}]}
+    state, evidence = _decision_inputs()
+    with pytest.raises(RuntimeError) as exc:
+        DeepSeekReasoner(api_key="test-secret", transport=send).decide(
+            state["delivery_context"], evidence, stage=DecisionStage.INITIAL,
+        )
+    assert "test-secret" not in str(exc.value)
+
+
+@pytest.mark.parametrize("route", ["WAIT_FOR_EVENT", "PROPOSE_RECOVERY"])
+def test_decide_initial_accepts_other_allowlisted_routes(route):
+    state, evidence = _decision_inputs()
+    decision = DeepSeekReasoner(api_key="test-secret", transport=fake_transport(
+        _decision_payload(route=route), {},
+    )).decide(state["delivery_context"], evidence, stage=DecisionStage.INITIAL)
+    assert decision.route.value == route
+
+
+def test_decide_sanitizes_transport_failures():
+    def send(url, *, headers, body, timeout):
+        raise RuntimeError("Authorization: Bearer test-secret")
+    state, evidence = _decision_inputs()
+    with pytest.raises(RuntimeError) as exc:
+        DeepSeekReasoner(api_key="test-secret", transport=send).decide(
+            state["delivery_context"], evidence, stage=DecisionStage.INITIAL,
+        )
+    assert "test-secret" not in str(exc.value)
+    assert "Authorization" not in str(exc.value)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda p: p.update(proposed_action="REFUND"),
+    lambda p: p.pop("proposed_action"),
+    lambda p: p.pop("buyer_intent"),
+    lambda p: p.update(route="WAIT_FOR_EVENT"),
+])
+def test_decide_after_event_rejects_missing_or_invalid_fields(mutate):
+    payload = _decision_payload("AFTER_EVENT", "PROPOSE_RECOVERY")
+    mutate(payload)
+    state, evidence = _decision_inputs()
+    with pytest.raises(RuntimeError):
+        DeepSeekReasoner(api_key="test-secret", transport=fake_transport(payload, {})).decide(
+            state["delivery_context"], evidence, stage=DecisionStage.AFTER_EVENT,
+            case_event=load_bi_event("OR-001"),
+        )
