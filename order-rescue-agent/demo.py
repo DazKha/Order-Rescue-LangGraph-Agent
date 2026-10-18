@@ -29,7 +29,7 @@ def _show_decision(state: dict) -> None:
     elif state.get("should_wait_event"):
         route, target = "WAIT_FOR_EVENT", state.get("event_target", "OPS")
     else:
-        route, target = "PROPOSE_RECOVERY", None
+        route, target = ("PROPOSE_RECOVERY" if "event_target" in state else "not selected"), None
     if target:
         route += f" ({target})"
     intent = decision.buyer_intent if decision and decision.buyer_intent else state["delivery_context"].buyer_intent

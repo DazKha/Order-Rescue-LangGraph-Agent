@@ -568,7 +568,8 @@ def propose_recovery(state: dict[str, Any]) -> dict[str, Any]:
         action = Action.NO_ACTION
     elif contact_result and contact_result.decision is not PolicyDecision.PERMITTED:
         action = Action.ESCALATE_REVIEW
-    elif decision is not None and decision.route is DecisionRoute.PROPOSE_RECOVERY and decision.proposed_action is not None:
+    elif (decision is not None and decision.route is DecisionRoute.PROPOSE_RECOVERY
+          and decision.proposed_action is not None and not assessment.missing_information):
         action = decision.proposed_action
     elif context.buyer_intent is BuyerIntent.DOES_NOT_WANT_DELIVERY:
         reply_text = state.get("buyer_reply") or (state.get("case_event").event_text if state.get("case_event") else "")

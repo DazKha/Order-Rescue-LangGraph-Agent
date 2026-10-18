@@ -298,6 +298,27 @@ def test_decide_initial_sends_observable_inputs_and_returns_ask():
     assert "case_event" not in user
 
 
+def test_decide_request_includes_complete_registered_decision_schema():
+    captured = {}
+    state, evidence = _decision_inputs()
+    DeepSeekReasoner(api_key="test-secret", transport=fake_transport(
+        _decision_payload(), captured,
+    )).decide(state["delivery_context"], evidence, stage=DecisionStage.INITIAL,
+              case_input=state["case_input"])
+
+    system = captured["request"]["messages"][0]["content"]
+    schema = json.loads(system.split("AgentDecision JSON Schema: ", 1)[1])
+    assert schema["properties"]["assessment"]["$ref"] == "#/$defs/Assessment"
+    assert set(schema["$defs"]["Assessment"]["required"]) == {"hypothesis", "confidence", "summary"}
+    assert schema["properties"]["parsed_facts"] == {
+        "additionalProperties": {"type": "string"}, "title": "Parsed Facts", "type": "object",
+    }
+    assert "ADDRESS_LANDMARK_UNCLEAR" in schema["$defs"]["Hypothesis"]["enum"]
+    assert "TEMP_AVAILABILITY_CONFLICT" in schema["$defs"]["Hypothesis"]["enum"]
+    assert schema["$defs"]["Confidence"]["enum"] == ["LOW", "MEDIUM", "HIGH"]
+    assert schema["$defs"]["DecisionRoute"]["enum"] == ["ASK", "WAIT_FOR_EVENT", "PROPOSE_RECOVERY"]
+
+
 def test_decide_after_event_sends_raw_event_and_returns_candidate():
     captured = {}
     state, evidence = _decision_inputs()

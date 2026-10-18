@@ -19,13 +19,16 @@ class FakeDecisionProvider:
         self, *, after_action=Action.STANDARD_REATTEMPT,
         after_intent=BuyerIntent.WANTS, initial_missing=None,
         initial_route=DecisionRoute.ASK, initial_target="BUYER",
+        initial_question="Do you still want this delivery?",
     ):
         self.calls = []
         self.after_action = after_action
         self.after_intent = after_intent
+        self.after_missing = []
         self.initial_missing = ["buyer_intent"] if initial_missing is None else initial_missing
         self.initial_route = initial_route
         self.initial_target = initial_target
+        self.initial_question = initial_question
 
     def decide(self, context, evidence, *, stage, case_input=None, case_event=None):
         self.calls.append((stage, case_event, tuple(evidence)))
@@ -43,7 +46,7 @@ class FakeDecisionProvider:
                 route=self.initial_route,
                 target=self.initial_target,
                 information_request=InformationRequest(
-                    question="Do you still want this delivery?",
+                    question=self.initial_question,
                     purpose="Confirm buyer intent before recovery.",
                 ) if self.initial_route is DecisionRoute.ASK else None,
                 evidence_refs=refs,
@@ -55,7 +58,7 @@ class FakeDecisionProvider:
             assessment=Assessment(
                 hypothesis=Hypothesis.TEMP_AVAILABILITY_CONFLICT,
                 confidence=Confidence.HIGH,
-                missing_information=[],
+                missing_information=self.after_missing,
                 evidence_refs=refs,
                 summary="The event gives the buyer's intent.",
             ),
@@ -360,3 +363,24 @@ def test_staged_recovery_candidate_rejected_by_policy_is_not_published():
     assert result["final_recommendation"].action is Action.ESCALATE_REVIEW
     assert result["case_status"] in {CaseStatus.ESCALATED, CaseStatus.BLOCKED}
     assert result["final_recommendation"].executed is False
+
+
+def test_positive_reply_without_requested_landmark_cannot_select_reattempt():
+    provider = FakeDecisionProvider(
+        initial_missing=["landmark"],
+        initial_question="What landmark marks the delivery address?",
+    )
+    provider.after_missing = ["landmark"]
+    graph = create_graph(reasoner=provider)
+    state = load_or_001()
+    config = thread_config(state["case_id"])
+
+    assert graph.invoke(state, config=config).get("__interrupt__")
+    assert "landmark" in graph.get_state(config).values["information_request"].question
+    result = resume(graph, config, "I still want delivery, but I do not know the landmark.")
+
+    assert result["delivery_context"].buyer_intent is BuyerIntent.WANTS
+    assert result["assessment"].missing_information == ["landmark"]
+    assert result["llm_decision"].proposed_action is Action.STANDARD_REATTEMPT
+    assert result["proposed_action"] is Action.ESCALATE_REVIEW
+    assert result["final_recommendation"].action is Action.ESCALATE_REVIEW

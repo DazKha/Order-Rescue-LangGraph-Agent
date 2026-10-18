@@ -494,7 +494,10 @@ class DeepSeekReasoner:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": common + " " + stage_prompt},
+                {"role": "system", "content": (
+                    common + " " + stage_prompt + " AgentDecision JSON Schema: "
+                    + json.dumps(AgentDecision.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
+                )},
                 {"role": "user", "content": json.dumps(observed_inputs, ensure_ascii=False)},
             ],
             "response_format": {"type": "json_object"},
