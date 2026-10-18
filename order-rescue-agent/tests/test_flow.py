@@ -1,11 +1,66 @@
 from langgraph.types import Command
 
 from agent.events import EventType
-from agent.fixtures import load_or_001
+from agent.fixtures import load_bi_event, load_or_001
 from agent.graph import create_graph, thread_config
 from agent.nodes import assess_case
 from agent.reasoning import DeterministicMockReasoner
-from agent.schemas import Action, CaseStatus, Confidence, DeliveryContext, Hypothesis, PolicyDecision
+from agent.schemas import (
+    Action, AgentDecision, Assessment, BuyerIntent, CaseStatus, Confidence,
+    DecisionRoute, DecisionStage, DeliveryContext, Hypothesis,
+    InformationRequest, PolicyDecision,
+)
+
+
+class FakeDecisionProvider:
+    def __init__(
+        self, *, after_action=Action.STANDARD_REATTEMPT,
+        after_intent=BuyerIntent.WANTS, initial_missing=None,
+    ):
+        self.calls = []
+        self.after_action = after_action
+        self.after_intent = after_intent
+        self.initial_missing = ["buyer_intent"] if initial_missing is None else initial_missing
+
+    def decide(self, context, evidence, *, stage, case_input=None, case_event=None):
+        self.calls.append((stage, case_event, tuple(evidence)))
+        refs = [item.evidence_id for item in evidence]
+        if stage is DecisionStage.INITIAL:
+            return AgentDecision(
+                stage=stage,
+                assessment=Assessment(
+                    hypothesis=Hypothesis.TEMP_AVAILABILITY_CONFLICT,
+                    confidence=Confidence.MEDIUM,
+                    missing_information=self.initial_missing,
+                    evidence_refs=refs,
+                    summary="Buyer intent needs confirmation.",
+                ),
+                route=DecisionRoute.ASK,
+                target="BUYER",
+                information_request=InformationRequest(
+                    question="Do you still want this delivery?",
+                    purpose="Confirm buyer intent before recovery.",
+                ),
+                evidence_refs=refs,
+            )
+        assert stage is DecisionStage.AFTER_EVENT
+        assert case_event is not None
+        return AgentDecision(
+            stage=stage,
+            assessment=Assessment(
+                hypothesis=Hypothesis.TEMP_AVAILABILITY_CONFLICT,
+                confidence=Confidence.HIGH,
+                missing_information=[],
+                evidence_refs=refs,
+                summary="The event gives the buyer's intent.",
+            ),
+            route=DecisionRoute.PROPOSE_RECOVERY,
+            buyer_intent=self.after_intent,
+            parsed_facts={"reply": "Buyer gave a direct response."},
+            proposed_action=self.after_action,
+            rationale="Apply the recorded reply to recovery planning.",
+            evidence_refs=refs,
+        )
 
 
 def begin_or_001():
@@ -165,4 +220,89 @@ def test_retry_is_blocked_if_return_starts_while_waiting():
     assert result["proposed_action"] is Action.ESCALATE_REVIEW
     assert result["final_recommendation"].action is Action.ESCALATE_REVIEW
     assert result["final_recommendation"].executed is False
+
+
+def test_staged_decision_waits_then_uses_rebuilt_event_evidence_for_one_resume_decision():
+    provider = FakeDecisionProvider()
+    graph = create_graph(reasoner=provider)
+    initial = load_or_001()
+    config = thread_config(initial["case_id"])
+
+    paused = graph.invoke(initial, config=config)
+    assert paused.get("__interrupt__")
+    assert len(provider.calls) == 1
+    assert provider.calls[0][0] is DecisionStage.INITIAL
+    assert graph.get_state(config).values["information_request"].question == "Do you still want this delivery?"
+
+    event = load_bi_event("OR-001")
+    result = graph.invoke(Command(resume={"case_event": event.model_dump(mode="json")}), config=config)
+
+    assert len(provider.calls) == 2
+    stage, observed_event, observed_evidence = provider.calls[1]
+    assert stage is DecisionStage.AFTER_EVENT
+    assert observed_event.event_type is event.event_type
+    assert any(item.raw_text == event.event_text for item in observed_evidence)
+    assert result["delivery_context"].buyer_intent is BuyerIntent.WANTS
+    assert result["llm_decision"].parsed_facts["reply"] == "Buyer gave a direct response."
+    assert result["parsed_facts"]["reply"] == "Buyer gave a direct response."
+    assert any(item.kind == "parsed_event_fact" and item.value == "Buyer gave a direct response."
+               for item in result["evidence"])
+    assert result["proposed_action"] is Action.STANDARD_REATTEMPT
+    assert result["recovery_policy_result"] is not None
+    assert result["case_status"] is CaseStatus.COMPLETED
+
+
+def test_staged_ask_cannot_use_invalid_buyer_contact():
+    provider = FakeDecisionProvider()
+    state = load_or_001()
+    state["case_input"] = state["case_input"].model_copy(update={
+        "contact_evidence": [{"outcome": "invalid_number"}],
+    })
+    result = create_graph(reasoner=provider).invoke(state, config=thread_config(state["case_id"]))
+
+    assert not result.get("__interrupt__")
+    assert result["contact_policy_result"].decision is not PolicyDecision.PERMITTED
+    assert result.get("information_request") is None
+    assert result["questions_asked"] == 0
+    assert len(provider.calls) == 1
+
+
+def test_staged_ask_cannot_exceed_one_question():
+    provider = FakeDecisionProvider()
+    state = load_or_001()
+    state["questions_asked"] = 1
+    result = create_graph(reasoner=provider).invoke(state, config=thread_config(state["case_id"]))
+
+    assert not result.get("__interrupt__")
+    assert result["contact_policy_result"].decision is not PolicyDecision.PERMITTED
+    assert result.get("information_request") is None
+    assert result["questions_asked"] == 1
+
+
+def test_staged_ask_without_actionable_missing_information_does_not_generate_question():
+    provider = FakeDecisionProvider(initial_missing=[])
+    state = load_or_001()
+    result = create_graph(reasoner=provider).invoke(state, config=thread_config(state["case_id"]))
+
+    assert not result.get("__interrupt__")
+    assert result["contact_policy_result"].decision is PolicyDecision.PERMITTED
+    assert result.get("information_request") is None
+    assert result["questions_asked"] == 0
+
+
+def test_staged_recovery_candidate_rejected_by_policy_is_not_published():
+    provider = FakeDecisionProvider(after_intent=BuyerIntent.UNKNOWN)
+    graph = create_graph(reasoner=provider)
+    state = load_or_001()
+    config = thread_config(state["case_id"])
+    assert graph.invoke(state, config=config).get("__interrupt__")
+    result = graph.invoke(Command(resume={"case_event": {
+        "case_id": state["case_id"], "event_type": "NO_REPLY",
+        "reply_received": False, "buyer_intent": "UNKNOWN",
+    }}), config=config)
+
+    assert result["proposed_action"] is Action.STANDARD_REATTEMPT
+    assert result["recovery_policy_result"].decision is not PolicyDecision.PERMITTED
     assert result["final_recommendation"].action is Action.ESCALATE_REVIEW
+    assert result["case_status"] in {CaseStatus.ESCALATED, CaseStatus.BLOCKED}
+    assert result["final_recommendation"].executed is False

@@ -12,14 +12,18 @@ from langgraph.types import interrupt
 from .bi_adapter import validate_case_input
 from .events import EventType, execution_event, lifecycle_events
 from .policy import evaluate_bi_eligibility, evaluate_contact_policy, evaluate_recovery_policy
-from .reasoning import Reasoner, mock_reasoner
+from .reasoning import DecisionReasoner, Reasoner, mock_reasoner
 from .schemas import (
     Action,
+    AgentDecision,
     Assessment,
     BiCaseInput,
     BuyerIntent,
+    CaseEvent,
     CaseStatus,
     Confidence,
+    DecisionRoute,
+    DecisionStage,
     Evidence,
     FinalRecommendation,
     Hypothesis,
@@ -144,20 +148,47 @@ def build_evidence(state: dict[str, Any]) -> dict[str, Any]:
                     provenance="synthetic_bi_case_input",
                     timestamp=stamp,
                 ))
-    if state.get("buyer_reply"):
-        buyer_evidence = next(
-            (item for item in state.get("evidence", []) if item.provenance == "simulated_buyer_reply"),
-            None,
-        )
-        if buyer_evidence:
-            incoming.append(buyer_evidence)
+    raw_event = state.get("case_event")
+    if raw_event is not None:
+        event = raw_event if isinstance(raw_event, CaseEvent) else CaseEvent.model_validate(raw_event)
+        incoming.append(Evidence(
+            evidence_id=f"{state['case_id']}:event:{event.event_type.value}:{state.get('iteration', 1)}",
+            kind=event.event_type.value.lower(),
+            value=event.event_text or event.event_type.value,
+            provenance="simulated_bi_event",
+            timestamp=stamp,
+            raw_text=event.event_text,
+        ))
+    elif state.get("buyer_reply") is not None:
+        reply = state["buyer_reply"]
+        incoming.append(Evidence(
+            evidence_id=f"{state['case_id']}:buyer-reply-raw:{state.get('questions_asked', 1)}",
+            kind="raw_buyer_reply",
+            value=reply or "NO_REPLY",
+            provenance="simulated_buyer_reply",
+            timestamp=stamp,
+            raw_text=reply,
+        ))
     logger.info("[%s] Evidence pack built with %d normalized items.", state["case_id"], len(incoming))
     return {"evidence": incoming, "events": lifecycle_events(state, "build_evidence")}
 
 
-def assess_case(state: dict[str, Any], reasoner: Reasoner | None = None) -> dict[str, Any]:
+def assess_case(state: dict[str, Any], reasoner: Reasoner | DecisionReasoner | None = None) -> dict[str, Any]:
     selected_reasoner = reasoner or mock_reasoner
-    if "case_input" in inspect.signature(selected_reasoner.assess).parameters:
+    decision = state.get("llm_decision")
+    if decision is not None and decision.stage is DecisionStage.AFTER_EVENT:
+        assessment = decision.assessment
+    elif callable(getattr(selected_reasoner, "decide", None)):
+        decision = selected_reasoner.decide(
+            state["delivery_context"], state.get("evidence", []),
+            stage=DecisionStage.INITIAL, case_input=state.get("case_input"),
+        )
+        if not isinstance(decision, AgentDecision):
+            decision = AgentDecision.model_validate(decision)
+        if decision.stage is not DecisionStage.INITIAL:
+            raise ValueError("Initial decision stage did not match the graph stage.")
+        assessment = decision.assessment
+    elif "case_input" in inspect.signature(selected_reasoner.assess).parameters:
         assessment = selected_reasoner.assess(
             state["delivery_context"], state.get("evidence", []), case_input=state.get("case_input")
         )
@@ -181,7 +212,10 @@ def assess_case(state: dict[str, Any], reasoner: Reasoner | None = None) -> dict
         },
     ))
     events.append(execution_event(state, "assess_case", EventType.NODE_COMPLETED))
-    return {"assessment": assessment, "missing_information": assessment.missing_information, "events": events}
+    update = {"assessment": assessment, "missing_information": assessment.missing_information, "events": events}
+    if decision is not None:
+        update["llm_decision"] = decision
+    return update
 
 
 def plan_information(state: dict[str, Any]) -> dict[str, Any]:
@@ -233,6 +267,19 @@ def plan_information(state: dict[str, Any]) -> dict[str, Any]:
         and not (case and case.extra_context.get("holiday_in_window") and not case.decision_deadline)
     )
     should_wait = can_ask or needs_operational_event
+    decision: AgentDecision | None = state.get("llm_decision")
+    if decision is not None:
+        if decision.route is DecisionRoute.PROPOSE_RECOVERY:
+            can_ask = False
+            should_wait = False
+        else:
+            target = decision.target.value if decision.target is not None else target
+            can_ask = decision.route is DecisionRoute.ASK and target == "BUYER" and can_ask
+            should_wait = (
+                can_ask if decision.route is DecisionRoute.ASK and target == "BUYER"
+                else needs_operational_event if decision.route is DecisionRoute.ASK
+                else True
+            )
     return {
         "should_ask_buyer": can_ask,
         "should_wait_event": should_wait,
@@ -270,7 +317,11 @@ def contact_policy_gate(state: dict[str, Any]) -> dict[str, Any]:
 def generate_question(state: dict[str, Any]) -> dict[str, Any]:
     target = state.get("event_target", "BUYER")
     case: BiCaseInput | None = state.get("case_input")
-    if target == "SELLER":
+    decision: AgentDecision | None = state.get("llm_decision")
+    if decision is not None and decision.route is DecisionRoute.ASK and decision.information_request is not None:
+        question = decision.information_request.question
+        purpose = decision.information_request.purpose
+    elif target == "SELLER":
         if case and case.extra_context.get("pending_sender_confirmation"):
             question = "Người gửi có muốn giao lại đơn này không?"
             purpose = "Confirm the sender's decision under the simulated seller-authority policy."
@@ -372,10 +423,70 @@ def _classify_buyer_intent(reply: str) -> BuyerIntent:
     return BuyerIntent.UNKNOWN
 
 
-def parse_buyer_reply(state: dict[str, Any]) -> dict[str, Any]:
+def parse_buyer_reply(state: dict[str, Any], reasoner: DecisionReasoner | None = None) -> dict[str, Any]:
+    if reasoner is not None and callable(getattr(reasoner, "decide", None)):
+        raw_event = state.get("case_event")
+        reply = (state.get("buyer_reply") or "").strip()
+        if isinstance(raw_event, CaseEvent):
+            event = raw_event
+        elif raw_event is not None:
+            event = CaseEvent.model_validate(raw_event)
+        else:
+            event = CaseEvent(
+                case_id=state["case_id"],
+                event_type=BiEventType.BUYER_REPLY if reply else BiEventType.NO_REPLY,
+                event_text=reply or None,
+                reply_received=bool(reply),
+            )
+        decision = reasoner.decide(
+            state["delivery_context"], state.get("evidence", []),
+            stage=DecisionStage.AFTER_EVENT, case_input=state.get("case_input"), case_event=event,
+        )
+        if not isinstance(decision, AgentDecision):
+            decision = AgentDecision.model_validate(decision)
+        known_ids = {item.evidence_id for item in state.get("evidence", [])}
+        if (
+            decision.stage is not DecisionStage.AFTER_EVENT
+            or decision.route is not DecisionRoute.PROPOSE_RECOVERY
+            or decision.buyer_intent is None
+            or not decision.parsed_facts
+            or any(not key.strip() or not value.strip() for key, value in decision.parsed_facts.items())
+            or decision.proposed_action is None
+            or not set(decision.evidence_refs + decision.assessment.evidence_refs) <= known_ids
+        ):
+            raise ValueError("After-event decision does not satisfy the graph contract.")
+        context = state["delivery_context"].model_copy(update={"buyer_intent": decision.buyer_intent})
+        stamp = datetime.now(UTC).isoformat()
+        evidence = [Evidence(
+            evidence_id=f"{state['case_id']}:parsed:{key}:{state.get('iteration', 1)}",
+            kind="parsed_event_fact", value=value,
+            provenance="structured_case_event_extraction", timestamp=stamp,
+            raw_text=event.event_text,
+        ) for key, value in decision.parsed_facts.items()]
+        resumed_state = {**state, "iteration": state.get("iteration", 1) + 1}
+        events = [execution_event(resumed_state, "parse_buyer_reply", EventType.NODE_STARTED)]
+        events.append(execution_event(resumed_state, "parse_buyer_reply", EventType.BUYER_REPLY_RECEIVED, {
+            "event_type": event.event_type.value, "intent": decision.buyer_intent.value,
+            "evidence_refs": [item.evidence_id for item in evidence],
+        }))
+        events.append(execution_event(resumed_state, "parse_buyer_reply", EventType.STATE_TRANSITION, {
+            "from": state.get("case_status", CaseStatus.WAITING_FOR_EVENT).value,
+            "to": CaseStatus.RUNNING.value,
+        }))
+        events.append(execution_event(resumed_state, "parse_buyer_reply", EventType.NODE_COMPLETED))
+        return {
+            "case_event": event,
+            "buyer_reply": event.event_text or reply,
+            "delivery_context": context,
+            "llm_decision": decision,
+            "parsed_facts": decision.parsed_facts,
+            "evidence": evidence,
+            "iteration": resumed_state["iteration"],
+            "case_status": CaseStatus.RUNNING,
+            "events": events,
+        }
     raw_event = state.get("case_event")
     if raw_event:
-        from .schemas import CaseEvent
         event = raw_event if isinstance(raw_event, CaseEvent) else CaseEvent.model_validate(raw_event)
         intent = event.buyer_intent or BuyerIntent.UNKNOWN
         reply = event.event_text or ""
@@ -449,10 +560,13 @@ def propose_recovery(state: dict[str, Any]) -> dict[str, Any]:
     contact_result = state.get("contact_policy_result")
     context = state["delivery_context"]
     case: BiCaseInput | None = state.get("case_input")
+    decision: AgentDecision | None = state.get("llm_decision")
     if case and case.extra_context.get("duplicate_of"):
         action = Action.NO_ACTION
     elif contact_result and contact_result.decision is not PolicyDecision.PERMITTED:
         action = Action.ESCALATE_REVIEW
+    elif decision is not None and decision.route is DecisionRoute.PROPOSE_RECOVERY and decision.proposed_action is not None:
+        action = decision.proposed_action
     elif context.buyer_intent is BuyerIntent.DOES_NOT_WANT_DELIVERY:
         reply_text = state.get("buyer_reply") or (state.get("case_event").event_text if state.get("case_event") else "")
         action = Action.ESCALATE_REVIEW if any(term in reply_text.lower() for term in ("hoàn tiền", "refund", "hủy")) else Action.NO_ACTION
