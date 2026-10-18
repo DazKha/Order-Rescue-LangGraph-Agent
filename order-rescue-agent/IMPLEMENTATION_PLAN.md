@@ -1,0 +1,13 @@
+# Order Rescue Agent V0 Implementation Plan
+
+**Goal:** Deliver a runnable LangGraph workflow for synthetic failed-delivery cases, including a checkpointed buyer clarification pause, reassessment, policy gate, final recommendation, and auditable events. Deterministic reasoning remains the default; optional DeepSeek assessment was added after the user requested a live LLM test.
+
+**Specification:** Python 3.11+, LangGraph 1.x, Pydantic v2, pytest, and standard-library logging. Deterministic mock reasoning is the default; optional DeepSeek structured assessment uses only current observable inputs. The missing BI workbook is recorded as an unavailable source; OR-001 uses fallback inputs explicitly stated in the user prompt. No real messaging, dispatch, address change, return, refund, carrier API, FastAPI, or frontend integration.
+
+**State and interfaces:** `AgentState` is a LangGraph `TypedDict`; nested domain values use Pydantic v2 models. `Reasoner` separates deterministic mock and optional DeepSeek assessment. `create_graph(checkpointer=None, reasoner=None)` builds the workflow. `load_or_001()` returns observable-only initial state. `evaluate_contact_policy(...)` and `evaluate_recovery_policy(...)` are pure functions. A run uses `thread_id=case_id`; resume uses `Command(resume={"text": reply})` on the same thread.
+
+**Workflow:** `START → build_evidence → assess_case → plan_information`; route through contact policy, one question, and LangGraph interrupt when buyer intent can change recovery; otherwise propose recovery. On reply, parse evidence, rebuild evidence, reassess, re-plan, propose an allowlisted action, evaluate deterministic policy, then finalize. A question event is emitted before the interrupt and deduplicated by stable event ID.
+
+**Files:** `agent/{__init__,schemas,state,events,policy,nodes,graph,fixtures}.py`, `data/fixtures/or_001.json`, `tests/test_policy.py`, `tests/test_flow.py`, `demo.py`, `requirements.txt`, and subproject `README.md` / `AGENTS.md`. The existing React site and synced `sources/` files remain untouched; the root README and AGENTS guidance will be extended without replacing existing content.
+
+**Validation:** The requested policy and graph tests, including the OR-001 end-to-end reassessment, policy ordering, clear negative buyer intent, and LLM schema allowlist checks, are implemented. Full pytest suite: 22 passed. Compile check passed. Deterministic `--auto` demo and live DeepSeek `--auto --llm` smoke both completed the interrupt/resume flow and produced a policy-permitted, unexecuted `STANDARD_REATTEMPT`. The in-memory checkpoint limitation is documented in README.

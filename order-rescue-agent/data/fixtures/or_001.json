@@ -1,0 +1,14 @@
+{
+  "case_id": "OR-001",
+  "trigger_event": "DELIVERY_FAILED",
+  "delivery_context": {
+    "delivery_status": "RECIPIENT_UNAVAILABLE",
+    "courier_note": "Called recipient but no answer.",
+    "attempt_count": 1,
+    "attempt_limit": 3,
+    "return_state": "NOT_STARTED",
+    "contact_eligible": true,
+    "unsupported_refusal": false,
+    "buyer_intent": "UNKNOWN"
+  }
+}

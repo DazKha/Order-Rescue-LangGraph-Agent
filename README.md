@@ -19,3 +19,9 @@ Vite prints the local URL when the development server starts. Use **Run case** t
 - `src/components/` renders the React Flow graph and synchronized case, inspector, and timeline views.
 
 All displayed case data and communication are simulated. Explainable event summaries are shown; private chain-of-thought is not.
+
+## Python LangGraph agent V0
+
+The repository also contains a separate, minimal Python implementation of the synthetic Order Rescue workflow. It uses LangGraph checkpointing and `interrupt()` / `Command(resume=...)` for the simulated buyer pause, performs reassessment and deterministic policy checks, and never executes logistics actions.
+
+See [`order-rescue-agent/README.md`](order-rescue-agent/README.md) for setup, `python demo.py --auto`, tests, mock boundaries, and the missing BI workbook note. The existing React Observatory remains unchanged.
