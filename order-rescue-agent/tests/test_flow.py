@@ -1,3 +1,5 @@
+import pytest
+
 from langgraph.types import Command
 
 from agent.events import EventType
@@ -16,11 +18,14 @@ class FakeDecisionProvider:
     def __init__(
         self, *, after_action=Action.STANDARD_REATTEMPT,
         after_intent=BuyerIntent.WANTS, initial_missing=None,
+        initial_route=DecisionRoute.ASK, initial_target="BUYER",
     ):
         self.calls = []
         self.after_action = after_action
         self.after_intent = after_intent
         self.initial_missing = ["buyer_intent"] if initial_missing is None else initial_missing
+        self.initial_route = initial_route
+        self.initial_target = initial_target
 
     def decide(self, context, evidence, *, stage, case_input=None, case_event=None):
         self.calls.append((stage, case_event, tuple(evidence)))
@@ -35,12 +40,12 @@ class FakeDecisionProvider:
                     evidence_refs=refs,
                     summary="Buyer intent needs confirmation.",
                 ),
-                route=DecisionRoute.ASK,
-                target="BUYER",
+                route=self.initial_route,
+                target=self.initial_target,
                 information_request=InformationRequest(
                     question="Do you still want this delivery?",
                     purpose="Confirm buyer intent before recovery.",
-                ),
+                ) if self.initial_route is DecisionRoute.ASK else None,
                 evidence_refs=refs,
             )
         assert stage is DecisionStage.AFTER_EVENT
@@ -288,6 +293,55 @@ def test_staged_ask_without_actionable_missing_information_does_not_generate_que
     assert result["contact_policy_result"].decision is PolicyDecision.PERMITTED
     assert result.get("information_request") is None
     assert result["questions_asked"] == 0
+
+
+def test_staged_wait_without_information_need_or_operational_event_does_not_interrupt():
+    provider = FakeDecisionProvider(
+        initial_route=DecisionRoute.WAIT_FOR_EVENT,
+        initial_target="OPS",
+        initial_missing=[],
+    )
+    state = load_or_001()
+    result = create_graph(reasoner=provider).invoke(state, config=thread_config(state["case_id"]))
+
+    assert not result.get("__interrupt__")
+    assert result["contact_policy_result"].decision is PolicyDecision.PERMITTED
+    assert result["should_wait_event"] is False
+    assert result.get("information_request") is None
+    assert result["questions_asked"] == 0
+
+
+@pytest.mark.parametrize("route", [DecisionRoute.ASK, DecisionRoute.WAIT_FOR_EVENT])
+def test_staged_contact_route_without_target_does_not_interrupt(route):
+    provider = FakeDecisionProvider(initial_route=route, initial_target=None)
+    state = load_or_001()
+    result = create_graph(reasoner=provider).invoke(state, config=thread_config(state["case_id"]))
+
+    assert not result.get("__interrupt__")
+    assert result.get("information_request") is None
+    assert result["questions_asked"] == 0
+
+
+@pytest.mark.parametrize("reference_location", ["decision", "assessment"])
+def test_initial_decision_rejects_unsupported_evidence_reference(reference_location):
+    class UnknownReferenceProvider(FakeDecisionProvider):
+        def decide(self, context, evidence, *, stage, case_input=None, case_event=None):
+            decision = super().decide(
+                context, evidence, stage=stage,
+                case_input=case_input, case_event=case_event,
+            )
+            if stage is DecisionStage.INITIAL:
+                if reference_location == "decision":
+                    return decision.model_copy(update={"evidence_refs": ["OR-001:unknown"]})
+                assessment = decision.assessment.model_copy(update={"evidence_refs": ["OR-001:unknown"]})
+                return decision.model_copy(update={"assessment": assessment})
+            return decision
+
+    state = load_or_001()
+    with pytest.raises(ValueError, match="evidence"):
+        create_graph(reasoner=UnknownReferenceProvider()).invoke(
+            state, config=thread_config(state["case_id"]),
+        )
 
 
 def test_staged_recovery_candidate_rejected_by_policy_is_not_published():

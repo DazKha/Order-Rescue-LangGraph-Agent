@@ -187,6 +187,9 @@ def assess_case(state: dict[str, Any], reasoner: Reasoner | DecisionReasoner | N
             decision = AgentDecision.model_validate(decision)
         if decision.stage is not DecisionStage.INITIAL:
             raise ValueError("Initial decision stage did not match the graph stage.")
+        known_ids = {item.evidence_id for item in state.get("evidence", [])}
+        if not set(decision.evidence_refs + decision.assessment.evidence_refs) <= known_ids:
+            raise ValueError("Initial decision referenced evidence outside the current evidence pack.")
         assessment = decision.assessment
     elif "case_input" in inspect.signature(selected_reasoner.assess).parameters:
         assessment = selected_reasoner.assess(
@@ -272,14 +275,14 @@ def plan_information(state: dict[str, Any]) -> dict[str, Any]:
         if decision.route is DecisionRoute.PROPOSE_RECOVERY:
             can_ask = False
             should_wait = False
+        elif decision.target is None:
+            can_ask = False
+            should_wait = False
         else:
-            target = decision.target.value if decision.target is not None else target
-            can_ask = decision.route is DecisionRoute.ASK and target == "BUYER" and can_ask
-            should_wait = (
-                can_ask if decision.route is DecisionRoute.ASK and target == "BUYER"
-                else needs_operational_event if decision.route is DecisionRoute.ASK
-                else True
-            )
+            target = decision.target.value
+            buyer_question_eligible = can_ask
+            can_ask = decision.route is DecisionRoute.ASK and target == "BUYER" and buyer_question_eligible
+            should_wait = buyer_question_eligible if target == "BUYER" else needs_operational_event
     return {
         "should_ask_buyer": can_ask,
         "should_wait_event": should_wait,
