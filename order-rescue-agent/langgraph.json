@@ -1,0 +1,6 @@
+{
+  "dependencies": ["."],
+  "graphs": {"order_rescue": "agent.server_graph:graph"},
+  "env": ".env",
+  "http": {"app": "agent.webapp:app"}
+}

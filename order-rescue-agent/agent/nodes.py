@@ -24,6 +24,8 @@ from .schemas import (
     Confidence,
     DecisionRoute,
     DecisionStage,
+    DecisionTarget,
+    DeliveryContext,
     Evidence,
     FinalRecommendation,
     Hypothesis,
@@ -43,6 +45,12 @@ def validate_input(state: dict[str, Any]) -> dict[str, Any]:
     raw = source.model_dump(mode="json") if isinstance(source, BiCaseInput) else source
     result = validate_case_input(raw)
     case = result.case or source
+    context_source = state.get("delivery_context")
+    context = (
+        context_source if isinstance(context_source, DeliveryContext)
+        else DeliveryContext.model_validate(context_source) if context_source is not None
+        else None
+    )
     issues = list(result.issues)
     preflight: tuple[Hypothesis, Action, PolicyDecision, str, str] | None = None
 
@@ -74,6 +82,8 @@ def validate_input(state: dict[str, Any]) -> dict[str, Any]:
 
     events = [execution_event(state, "validate_input", EventType.NODE_STARTED)]
     update: dict[str, Any] = {"case_input": case, "input_issues": issues}
+    if context is not None:
+        update["delivery_context"] = context
     if isinstance(case, BiCaseInput) and result.valid:
         update["eligibility"] = (
             "UNKNOWN" if extra.get("pii_detected") else
@@ -231,7 +241,15 @@ def plan_information(state: dict[str, Any]) -> dict[str, Any]:
         "next_route_date", "ability_to_pay", "orderer_intent", "recipient_awareness",
         "alternate_contact_channel", "valid_contact", "sender_decision",
     }
-    can_change_action = bool(set(assessment.missing_information).intersection(askable_fields))
+    decision: AgentDecision | None = state.get("llm_decision")
+    has_actionable_llm_question = bool(
+        decision
+        and decision.route is DecisionRoute.ASK
+        and decision.target is DecisionTarget.BUYER
+        and decision.information_request is not None
+        and assessment.missing_information
+    )
+    can_change_action = bool(set(assessment.missing_information).intersection(askable_fields)) or has_actionable_llm_question
     human_review_hypotheses = {
         Hypothesis.REFUSAL_UNSUPPORTED, Hypothesis.REFUSAL_CONFIRMED,
         Hypothesis.LIFECYCLE_CLOSED,
@@ -270,7 +288,6 @@ def plan_information(state: dict[str, Any]) -> dict[str, Any]:
         and not (case and case.extra_context.get("holiday_in_window") and not case.decision_deadline)
     )
     should_wait = can_ask or needs_operational_event
-    decision: AgentDecision | None = state.get("llm_decision")
     if decision is not None:
         if decision.route is DecisionRoute.PROPOSE_RECOVERY:
             can_ask = False

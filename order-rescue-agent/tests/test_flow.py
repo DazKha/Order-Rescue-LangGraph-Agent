@@ -260,6 +260,27 @@ def test_staged_decision_waits_then_uses_rebuilt_event_evidence_for_one_resume_d
     assert result["case_status"] is CaseStatus.COMPLETED
 
 
+def test_llm_ask_with_natural_language_missing_information_pauses_for_buyer():
+    provider = FakeDecisionProvider(
+        initial_missing=[
+            "Buyer's preferred delivery time or alternate address",
+            "Whether buyer wants redelivery or another resolution",
+        ],
+        initial_question="Bạn còn muốn nhận đơn hàng này không?",
+    )
+    graph = create_graph(reasoner=provider)
+    initial = load_or_001()
+    config = thread_config(initial["case_id"])
+
+    result = graph.invoke(initial, config=config)
+    waiting = graph.get_state(config).values
+
+    assert result.get("__interrupt__")
+    assert waiting["case_status"] is CaseStatus.WAITING_FOR_BUYER
+    assert waiting["information_request"].question == "Bạn còn muốn nhận đơn hàng này không?"
+    assert waiting["final_recommendation"] is None
+
+
 def test_staged_ask_cannot_use_invalid_buyer_contact():
     provider = FakeDecisionProvider()
     state = load_or_001()

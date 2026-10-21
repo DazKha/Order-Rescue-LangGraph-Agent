@@ -1,3 +1,5 @@
 langgraph>=1.2,<2
+langgraph-cli[inmem]>=0.4,<1
+fastapi>=0.115,<1
 pydantic>=2.7,<3
 pytest>=8,<9

@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Decision log and project context for the Order Rescue LangGraph Agent.">
+  <title>Order Rescue Agent — Decision & Context Log</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #202b3c;
+      --muted: #5d6b7d;
+      --line: #d9e2ec;
+      --paper: #ffffff;
+      --canvas: #f2f6fa;
+      --blue: #175cd3;
+      --blue-soft: #eaf2ff;
+      --green: #067647;
+      --green-soft: #e8f7ef;
+      --amber: #935b00;
+      --amber-soft: #fff5d9;
+      --code: #17212f;
+      --shadow: 0 12px 34px rgba(25, 48, 79, .08);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font: 16px/1.62 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    .shell { max-width: 1180px; margin: 0 auto; padding: 34px 22px 72px; }
+    header {
+      padding: 34px clamp(22px, 5vw, 58px);
+      color: white;
+      border-radius: 24px;
+      background: radial-gradient(circle at 85% 10%, #376db5 0, transparent 32%), linear-gradient(135deg, #142b49, #1c4775 68%, #23629b);
+      box-shadow: var(--shadow);
+    }
+    .eyebrow { margin: 0 0 8px; text-transform: uppercase; letter-spacing: .13em; font-size: .75rem; opacity: .8; }
+    h1 { max-width: 820px; margin: 0; font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.08; letter-spacing: -.035em; }
+    header p { max-width: 760px; margin: 18px 0 0; color: #e1ebf8; font-size: 1.05rem; }
+    .meta { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 22px; }
+    .pill { display: inline-flex; align-items: center; padding: 5px 11px; border: 1px solid rgba(255,255,255,.28); border-radius: 999px; background: rgba(255,255,255,.1); font-size: .82rem; }
+    .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 24px; margin-top: 24px; align-items: start; }
+    nav, main section { border: 1px solid var(--line); border-radius: 18px; background: var(--paper); box-shadow: var(--shadow); }
+    nav { position: sticky; top: 18px; padding: 17px; }
+    nav strong { display: block; margin: 0 0 10px; font-size: .9rem; }
+    nav a { display: block; padding: 7px 9px; border-radius: 8px; color: var(--muted); font-size: .9rem; text-decoration: none; }
+    nav a:hover { background: var(--blue-soft); color: var(--blue); }
+    main { display: grid; gap: 18px; min-width: 0; }
+    main section { padding: clamp(20px, 3vw, 30px); scroll-margin-top: 18px; }
+    h2 { margin: 0 0 14px; font-size: 1.45rem; line-height: 1.25; letter-spacing: -.02em; }
+    h3 { margin: 22px 0 8px; font-size: 1.05rem; }
+    p { margin: 8px 0 13px; }
+    .muted { color: var(--muted); }
+    .callout { margin: 16px 0; padding: 14px 16px; border-left: 4px solid var(--blue); border-radius: 10px; background: var(--blue-soft); }
+    .callout.warning { border-left-color: #d99200; background: var(--amber-soft); }
+    .callout.good { border-left-color: #11a36a; background: var(--green-soft); }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .card { padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: #fbfdff; }
+    .card h3 { margin: 0 0 6px; }
+    .card p { margin: 0; color: var(--muted); }
+    .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0; }
+    .node { padding: 7px 10px; border: 1px solid #bdd0e6; border-radius: 9px; background: #f5f9ff; font: 600 .83rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .node.llm { border-color: #b9a9f5; background: #f3efff; }
+    .node.gate { border-color: #a7d9bd; background: #effaf3; }
+    .arrow { color: #7a8999; font-weight: 700; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #f5f8fc; color: #34445a; white-space: nowrap; }
+    tr:last-child td { border-bottom: 0; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { padding: 1px 5px; border-radius: 5px; background: #edf2f7; font-size: .9em; overflow-wrap: anywhere; }
+    pre { overflow-x: auto; padding: 15px; border-radius: 12px; background: var(--code); color: #e9f1fb; font-size: .85rem; line-height: 1.55; }
+    .timeline { display: grid; gap: 0; margin-top: 14px; }
+    .entry { position: relative; padding: 0 0 22px 23px; border-left: 2px solid #d7e3f1; }
+    .entry:last-child { padding-bottom: 0; border-left-color: transparent; }
+    .entry::before { position: absolute; top: 6px; left: -6px; width: 10px; height: 10px; border: 2px solid white; border-radius: 50%; background: var(--blue); content: ""; box-shadow: 0 0 0 1px var(--blue); }
+    .entry time { display: block; margin-bottom: 3px; color: var(--muted); font-size: .8rem; }
+    .entry strong { display: block; }
+    ul, ol { padding-left: 22px; }
+    li { margin: 5px 0; }
+    footer { padding: 22px 10px 0; color: var(--muted); text-align: center; font-size: .83rem; }
+    @media (max-width: 780px) {
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; display: flex; flex-wrap: wrap; gap: 3px; }
+      nav strong { width: 100%; }
+      .grid { grid-template-columns: 1fr; }
+      .shell { padding: 16px 12px 44px; }
+      header { border-radius: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <p class="eyebrow">Project memory · synthetic decision support</p>
+      <h1>Order Rescue Agent</h1>
+      <p>Decision log, kiến trúc đã thống nhất và bối cảnh làm việc để có thể tiếp tục dự án mà không phải dựng lại lịch sử trao đổi.</p>
+      <div class="meta">
+        <span class="pill">Cập nhật: 18-10-2026</span>
+        <span class="pill">Python · LangGraph · Pydantic</span>
+        <span class="pill">LLM opt-in · policy deterministic</span>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav aria-label="Mục lục">
+        <strong>Trong trang này</strong>
+        <a href="#snapshot">Trạng thái hiện tại</a>
+        <a href="#decisions">Decision log</a>
+        <a href="#architecture">Kiến trúc</a>
+        <a href="#contracts">Input / output</a>
+        <a href="#flow">Flow OR-001</a>
+        <a href="#boundaries">Giới hạn đã thống nhất</a>
+        <a href="#commands">Cách chạy</a>
+        <a href="#repo">GitHub và local</a>
+        <a href="#next">Câu hỏi còn mở</a>
+      </nav>
+
+      <main>
+        <section id="snapshot">
+          <h2>Trạng thái hiện tại</h2>
+          <div class="grid">
+            <div class="card"><h3>Mục tiêu</h3><p>Agent xử lý các case giao hàng thất bại tổng hợp, hỏi làm rõ khi cần, đánh giá lại sau event và đưa recommendation qua policy gate.</p></div>
+            <div class="card"><h3>Hai decision point</h3><p>LLM gọi ở <code>INITIAL</code> và <code>AFTER_EVENT</code>. Assessment sau event được dùng lại, không gọi lần thứ ba.</p></div>
+            <div class="card"><h3>Giao tiếp</h3><p>Chỉ là event mô phỏng trong CLI/checkpoint. Không nhắn buyer thật, không gọi carrier, không dispatch.</p></div>
+            <div class="card"><h3>Case mẫu</h3><p><code>OR-001</code>: giao thất bại vì người nhận ở cơ quan; hiện còn cơ hội hỏi intent/khả năng nhận hàng.</p></div>
+          </div>
+          <div class="callout good"><strong>Nguyên tắc chốt:</strong> LLM đánh giá, hỏi và đề xuất; validation, eligibility, contact policy, recovery policy và final status do code deterministic quyết định. Recommendation luôn <code>executed=False</code>.</div>
+        </section>
+
+        <section id="decisions">
+          <h2>Decision log</h2>
+          <p class="muted">Các quyết định sản phẩm/kiến trúc được ghi theo chủ đề. Đây là ghi chú tĩnh; cập nhật mục này khi có quyết định mới.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>ID</th><th>Quyết định</th><th>Lý do / hệ quả</th></tr></thead>
+              <tbody>
+                <tr><td>D-01</td><td>Giữ React Observatory và Python agent là hai implementation tách biệt.</td><td><code>npm run dev</code> chạy Vite/React với mock event source; nó không khởi chạy LangGraph Python.</td></tr>
+                <tr><td>D-02</td><td>Làm bản LLM naive trước, phát triển harness và policy từ từ.</td><td>Tránh xây workflow phức tạp trước khi hiểu rõ flow. Bản đầu cần thể hiện đủ ý tưởng và chạy end-to-end.</td></tr>
+                <tr><td>D-03</td><td>LLM tham gia nhiều hơn: assess + route/question ban đầu; parse event + reassess + candidate action sau event.</td><td>Hai lần gọi có schema rõ ràng; không tạo một LLM agent tự do điều khiển graph.</td></tr>
+                <tr><td>D-04</td><td>Route giới hạn: <code>ASK</code>, <code>WAIT_FOR_EVENT</code>, <code>PROPOSE_RECOVERY</code>; target giới hạn: <code>BUYER</code>, <code>SELLER</code>, <code>OPS</code>.</td><td>Graph giữ fixed edges, không nhận tên node từ model. Route phải qua deterministic eligibility và policy gate.</td></tr>
+                <tr><td>D-05</td><td>Policy là authority cuối cùng; LLM action chỉ là candidate.</td><td>LLM không cấp quyền thực hiện. Final recommendation không tạo side effect.</td></tr>
+                <tr><td>D-06</td><td>Không thêm tools/tích hợp thực tế trong bản này.</td><td>Không carrier API, buyer messaging, courier dispatch, đổi địa chỉ/thanh toán, refund hay return.</td></tr>
+                <tr><td>D-07</td><td>Dùng dữ liệu BI synthetic và tách input, delayed events, expected labels.</td><td>Expected labels chỉ dùng trong test, không đưa vào prompt/model context. Workbook nguồn không nằm trong repo.</td></tr>
+                <tr><td>D-08</td><td>DeepSeek opt-in qua <code>--llm</code>; mặc định giữ deterministic mock.</td><td>Key phải có trong process environment. Python không tự nạp `.env`; không ghi key vào source, fixtures, README hoặc note.</td></tr>
+                <tr><td>D-09</td><td>Checkpoint hiện tại dùng <code>InMemorySaver</code>.</td><td>Resume được trong process demo; chưa có durable database hoặc service boundary production.</td></tr>
+                <tr><td>D-10</td><td>Chọn cách 1 khi thu gọn GitHub: cùng repo URL, commit thường làm root chỉ còn agent, không rewrite history.</td><td>Đã push `1ea680c` lên GitHub main. Các commit lịch sử cũ vẫn giữ cây monorepo; cây mới nhất chỉ có agent.</td></tr>
+                <tr><td>D-11</td><td>Sửa bug route ASK khi assessment dùng nhãn missing-information tự nhiên.</td><td>Trước đây graph chỉ nhận mã cố định như `buyer_intent`, khiến ASK bị loại. Eligibility hiện nhận ASK có buyer target, information request và thông tin thiếu; các contact gates/one-question limit vẫn giữ.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="architecture">
+          <h2>Kiến trúc và node flow</h2>
+          <div class="flow" aria-label="Node flow">
+            <span class="node">validate_input</span><span class="arrow">→</span>
+            <span class="node">build_evidence</span><span class="arrow">→</span>
+            <span class="node llm">assess_case · INITIAL</span><span class="arrow">→</span>
+            <span class="node">plan_information</span><span class="arrow">→</span>
+            <span class="node gate">contact_policy_gate</span><span class="arrow">→</span>
+            <span class="node">generate_question</span><span class="arrow">→</span>
+            <span class="node">wait_for_buyer ⏸</span>
+          </div>
+          <div class="flow" aria-label="Resume flow">
+            <span class="node">resume event</span><span class="arrow">→</span>
+            <span class="node">build_evidence</span><span class="arrow">→</span>
+            <span class="node llm">parse_buyer_reply · AFTER_EVENT</span><span class="arrow">→</span>
+            <span class="node">assess_case · reuse</span><span class="arrow">→</span>
+            <span class="node">plan_information</span><span class="arrow">→</span>
+            <span class="node">propose_recovery</span><span class="arrow">→</span>
+            <span class="node gate">recovery_policy_gate</span><span class="arrow">→</span>
+            <span class="node">finalize</span>
+          </div>
+
+          <h3>Nodes — state inputs và outputs</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Node</th><th>Đọc chính</th><th>Ghi vào AgentState</th><th>LLM?</th></tr></thead>
+              <tbody>
+                <tr><td><code>validate_input</code></td><td><code>case_input</code>, case metadata</td><td><code>case_input</code> đã normalize, <code>input_issues</code>, <code>eligibility</code>; preflight có thể ghi assessment/action/policy để finalize trực tiếp; <code>events</code>.</td><td>Không</td></tr>
+                <tr><td><code>build_evidence</code></td><td><code>delivery_context</code>, BI input, raw event/reply</td><td><code>evidence</code> (merge theo evidence_id), <code>events</code>.</td><td>Không</td></tr>
+                <tr><td><code>assess_case</code></td><td>context, evidence, case input, stored decision</td><td><code>assessment</code>, <code>missing_information</code>, initial <code>llm_decision</code>, <code>events</code>.</td><td>Có ở INITIAL nếu decision-capable reasoner; mock còn lại. Sau event dùng lại assessment.</td></tr>
+                <tr><td><code>plan_information</code></td><td>assessment, decision route/target, eligibility, question count, event</td><td><code>should_ask_buyer</code>, <code>should_wait_event</code>, <code>event_target</code>, RUNNING status, events.</td><td>Không</td></tr>
+                <tr><td><code>contact_policy_gate</code></td><td>case/context, target, contact evidence, question count</td><td><code>contact_policy_result</code>, events.</td><td>Không — deterministic gate.</td></tr>
+                <tr><td><code>generate_question</code></td><td>LLM information request hoặc template, target, assessment</td><td><code>information_request</code>, provisional <code>proposed_action</code>, <code>questions_asked</code>, waiting status, optional recovery policy result, events.</td><td>Question có thể do INITIAL decision cung cấp; node không tự gọi LLM.</td></tr>
+                <tr><td><code>wait_for_buyer</code></td><td>information request, target, allowed event types</td><td>Sau resume: <code>case_event</code> hoặc <code>buyer_reply</code>, events.</td><td>Không; LangGraph interrupt.</td></tr>
+                <tr><td><code>parse_buyer_reply</code></td><td>raw event/reply, current evidence, context, case input</td><td>updated context intent, <code>llm_decision</code>, parsed facts/evidence, iteration, status, events.</td><td>Có ở AFTER_EVENT; mock path parse deterministic.</td></tr>
+                <tr><td><code>propose_recovery</code></td><td>assessment, buyer intent, LLM candidate, policies/context</td><td><code>proposed_action</code>, events.</td><td>Không gọi model; dùng candidate đã validate hoặc deterministic fallback.</td></tr>
+                <tr><td><code>recovery_policy_gate</code></td><td>candidate, case/context, assessment, event</td><td><code>recovery_policy_result</code>, events.</td><td>Không — deterministic gate.</td></tr>
+                <tr><td><code>finalize</code></td><td>candidate, recovery policy result, assessment</td><td><code>final_recommendation</code>, terminal <code>case_status</code>, events.</td><td>Không</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warning"><strong>Giới hạn checkpoint:</strong> graph dùng in-memory checkpoint và thread ID theo case ID. Đây không phải workflow service bền vững qua restart.</div>
+        </section>
+
+        <section id="contracts">
+          <h2>Input / output contracts</h2>
+          <h3>Đầu vào</h3>
+          <ul>
+            <li><code>BiCaseInput</code>: các field case nhìn thấy từ BI như status/reason, service/route, attempts, contact evidence, return state, deadline, disruption, actor role và extra context.</li>
+            <li><code>DeliveryContext</code>: normalized delivery status, courier note, attempt bounds, return state, contact eligibility và buyer intent.</li>
+            <li><code>CaseEvent</code>: event tới sau interrupt, ví dụ BUYER_REPLY, NO_REPLY, TIMEOUT, SELLER_UPDATE hoặc DISRUPTION_RESOLVED.</li>
+            <li><code>Evidence</code>: ID + kind + value + provenance + timestamp + raw_text tùy chọn. Evidence refs từ model phải tồn tại trong pack hiện tại.</li>
+          </ul>
+          <h3>LLM output: <code>AgentDecision</code></h3>
+          <ul>
+            <li><code>INITIAL</code>: assessment + route; ASK cần target và <code>information_request</code>; WAIT cần target; PROPOSE_RECOVERY cần action candidate và rationale.</li>
+            <li><code>AFTER_EVENT</code>: parsed buyer intent/facts + updated assessment + action candidate; route bắt buộc là PROPOSE_RECOVERY.</li>
+            <li>Enums cho hypothesis, confidence, intent, route, target và action được validate. Sau event, raw reply vẫn được lưu làm evidence; intent mơ hồ là UNKNOWN.</li>
+          </ul>
+          <h3>Đầu ra</h3>
+          <ul>
+            <li>Đang chờ event: <code>case_status</code> là WAITING_FOR_BUYER hoặc WAITING_FOR_EVENT; có <code>information_request</code> và checkpoint.</li>
+            <li>Đã kết thúc: <code>final_recommendation</code> gồm action, policy decision/version, rationale, <code>executed=False</code> và <code>side_effects=[]</code>; status là COMPLETED, BLOCKED hoặc ESCALATED.</li>
+            <li><code>events</code> lưu lifecycle trace theo node, iteration và policy evaluation.</li>
+          </ul>
+        </section>
+
+        <section id="flow">
+          <h2>Ví dụ flow hoàn chỉnh: OR-001</h2>
+          <div class="timeline">
+            <div class="entry"><time>Input</time><strong>DELIVERY_FAILED / RECIPIENT_UNAVAILABLE</strong><span class="muted">Courier note: người nhận đang ở cơ quan, chưa thống nhất giờ về. Đây là dữ liệu synthetic.</span></div>
+            <div class="entry"><time>1 · Initial decision</time><strong>Evidence → assessment → route ASK (BUYER)</strong><span class="muted">LLM có thể nêu missing information bằng ngôn ngữ tự nhiên và tạo câu hỏi. Contact gate xác định có được hỏi hay không.</span></div>
+            <div class="entry"><time>2 · Interrupt</time><strong>CLI hiển thị câu hỏi mô phỏng</strong><span class="muted">Không có tin nhắn thật được gửi. Người chạy demo nhập reply hoặc chọn --auto để lấy event fixture.</span></div>
+            <div class="entry"><time>3 · Resume</time><strong>Raw event vào evidence trước khi parse</strong><span class="muted">AFTER_EVENT decision trích xuất intent/facts. Buyer reply như “Vẫn muốn nhận, giao lại giúp mình” được kỳ vọng là WANTS nếu event evidence hỗ trợ.</span></div>
+            <div class="entry"><time>4 · Candidate + policy</time><strong>Candidate action đi qua recovery policy gate</strong><span class="muted">Policy có thể cho phép, block hoặc escalate. Không có hành động logistics được thực thi.</span></div>
+          </div>
+          <p>Chạy deterministic: <code>python demo.py --auto</code>. Chạy DeepSeek với event synthetic: <code>python demo.py --auto --llm</code>. Chạy tương tác: <code>python demo.py --llm</code>.</p>
+        </section>
+
+        <section id="boundaries">
+          <h2>Giới hạn và nguyên tắc an toàn</h2>
+          <ul>
+            <li>Data và events synthetic; expected BI labels chỉ dành cho test, không vào prompt.</li>
+            <li>Policy demo/BI không phải policy vận hành đã được carrier xác nhận.</li>
+            <li>Không tool integrations, không external side effects và không production service/API.</li>
+            <li>Model timeout/JSON/schema/evidence failure không được silent fallback sang mock khi đã bật <code>--llm</code>.</li>
+            <li>Không lưu API key trong HTML/README, source, fixture hoặc commit. Note này chỉ ghi tên biến <code>DEEPSEEK_API_KEY</code>, không ghi giá trị.</li>
+            <li>React Observatory dùng mock riêng; <code>npm run dev</code> không nối vào agent Python.</li>
+          </ul>
+        </section>
+
+        <section id="commands">
+          <h2>Commands và vận hành local</h2>
+          <pre><code>cd order-rescue-agent
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# deterministic; auto-resume bằng fixture
+python demo.py --auto
+
+# tương tác; CLI chờ reply mô phỏng sau interrupt
+python demo.py --llm
+
+# DeepSeek ở cả hai decision points + event fixture
+python demo.py --auto --llm</code></pre>
+          <p>Nếu key nằm trong file `.env`, shell phải nạp file vào process trước khi chạy Python; chỉ đặt file trong thư mục không tự tạo environment variable. Không bao giờ echo/in ra giá trị key để debug. Kiểm tra an toàn: <code>python -c 'import os; print("loaded" if os.getenv("DEEPSEEK_API_KEY") else "missing")'</code>.</p>
+          <p>Test suite: <code>python -m pytest -q</code>. Test provider dùng fake transport; không cần gọi API thật.</p>
+        </section>
+
+        <section id="repo">
+          <h2>GitHub và local workspace</h2>
+          <ul>
+            <li>Quyết định được chọn: giữ repo GitHub hiện tại, đưa nội dung agent lên root bằng commit thường; không rewrite history/force-push.</li>
+            <li>Commit restructure đã push: <code>1ea680c</code>. Root hiện tại của GitHub chỉ chứa agent. Lịch sử trước commit đó vẫn giữ tree project cũ.</li>
+            <li>Local ChatGPT-project checkout vẫn có layout cũ là parent repo với thư mục <code>order-rescue-agent/</code>. Worktree agent-only riêng từng được tạo để chuẩn bị/push repo root.</li>
+            <li>File này và README mới được viết tại local path <code>order-rescue-agent/</code>. Chúng chưa được commit/push vào standalone GitHub root nếu chưa chạy một lần đồng bộ docs riêng.</li>
+            <li>`.env` và `.DS_Store` là file local/untracked, không đưa vào commit. Không mở `.env` để copy context vào note.</li>
+          </ul>
+          <div class="callout"><strong>File liên quan:</strong> <a href="README.md">README</a> · <a href="agent/graph.py">graph.py</a> · <a href="agent/nodes.py">nodes.py</a> · <a href="agent/reasoning.py">reasoning.py</a> · <a href="agent/schemas.py">schemas.py</a> · <a href="agent/policy.py">policy.py</a> · <a href="demo.py">demo.py</a>.</div>
+        </section>
+
+        <section id="next">
+          <h2>Các điểm chưa quyết định</h2>
+          <ul>
+            <li>Có đồng bộ README và note.html mới lên standalone GitHub root hay chỉ giữ trong local ChatGPT project?</li>
+            <li>Có cần durable checkpoint/database thay InMemorySaver không? Chưa có quyết định.</li>
+            <li>Có cần nối React Observatory với Python agent không? Hiện vẫn tách biệt; chưa được yêu cầu.</li>
+            <li>Có dùng API/logistics tool thật không? Không trong bản hiện tại; cần thiết kế và approval/policy riêng nếu phạm vi đổi.</li>
+            <li>Harness/evals để kiểm soát chất lượng DeepSeek sẽ được xây dần; bản hiện tại chủ yếu xác nhận schema, boundary và flow qua fake provider.</li>
+          </ul>
+        </section>
+      </main>
+    </div>
+    <footer>Order Rescue Agent · project note snapshot · không chứa credentials · chỉnh sửa thủ công khi có quyết định mới</footer>
+  </div>
+</body>
+</html>
