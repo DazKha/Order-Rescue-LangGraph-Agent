@@ -298,6 +298,18 @@ def test_decide_initial_sends_observable_inputs_and_returns_ask():
     assert "case_event" not in user
 
 
+def test_decide_rejects_seller_question_in_buyer_only_flow():
+    state, evidence = _decision_inputs()
+    payload = _decision_payload()
+    payload["target"] = "SELLER"
+
+    with pytest.raises(RuntimeError, match="buyer"):
+        DeepSeekReasoner(api_key="test-secret", transport=fake_transport(payload, {})).decide(
+            state["delivery_context"], evidence, stage=DecisionStage.INITIAL,
+            case_input=state["case_input"],
+        )
+
+
 def test_decide_request_includes_complete_registered_decision_schema():
     captured = {}
     state, evidence = _decision_inputs()
@@ -367,13 +379,21 @@ def test_decide_rejects_malformed_json_without_leaking_secret():
     assert "test-secret" not in str(exc.value)
 
 
-@pytest.mark.parametrize("route", ["WAIT_FOR_EVENT", "PROPOSE_RECOVERY"])
+@pytest.mark.parametrize("route", ["PROPOSE_RECOVERY"])
 def test_decide_initial_accepts_other_allowlisted_routes(route):
     state, evidence = _decision_inputs()
     decision = DeepSeekReasoner(api_key="test-secret", transport=fake_transport(
         _decision_payload(route=route), {},
     )).decide(state["delivery_context"], evidence, stage=DecisionStage.INITIAL)
     assert decision.route.value == route
+
+
+def test_decide_initial_rejects_wait_without_buyer_question():
+    state, evidence = _decision_inputs()
+    with pytest.raises(RuntimeError, match="non-buyer wait"):
+        DeepSeekReasoner(api_key="test-secret", transport=fake_transport(
+            _decision_payload("INITIAL", "WAIT_FOR_EVENT"), {},
+        )).decide(state["delivery_context"], evidence, stage=DecisionStage.INITIAL)
 
 
 def test_decide_sanitizes_transport_failures():
@@ -454,3 +474,17 @@ def test_decide_after_event_accepts_unknown_intent_with_no_reply_fact():
         case_event=_no_reply_event(),
     )
     assert decision.buyer_intent is BuyerIntent.UNKNOWN
+
+
+def test_seller_event_cannot_be_used_as_buyer_intent():
+    state, evidence = _decision_inputs()
+    payload = _decision_payload("AFTER_EVENT", "PROPOSE_RECOVERY")
+    seller_event = CaseEvent(
+        case_id="OR-001", event_type=EventType.SELLER_REPLY,
+        event_text="Seller agrees to another attempt.",
+    )
+    with pytest.raises(RuntimeError, match="buyer intent"):
+        DeepSeekReasoner(api_key="test-secret", transport=fake_transport(payload, {})).decide(
+            state["delivery_context"], evidence, stage=DecisionStage.AFTER_EVENT,
+            case_event=seller_event,
+        )

@@ -4,7 +4,6 @@ from pathlib import Path
 from agent.bi_adapter import validate_case_input
 from agent.fixtures import load_bi_case, load_bi_event
 from agent.graph import create_graph, thread_config
-from agent.reasoning import DeterministicMockReasoner
 from agent.schemas import Action, BiCaseInput, BuyerIntent, CaseEvent, EventType, Hypothesis, PolicyDecision, ReturnState
 
 
@@ -61,17 +60,6 @@ def test_bi_events_match_event_schema_and_use_bi_intents():
     assert parsed.buyer_intent is BuyerIntent.WANTS
 
 
-def test_reasoner_assesses_from_bi_case_input():
-    state = load_bi_case("OR-001")
-    assessment = DeterministicMockReasoner().assess(
-        state["delivery_context"], [], case_input=state["case_input"]
-    )
-
-    assert assessment.hypothesis.value == "TEMP_AVAILABILITY_CONFLICT"
-    assert assessment.confidence.value == "MEDIUM"
-    assert "buyer_intent" in assessment.missing_information
-
-
 def test_bi_invalid_input_fails_closed_with_field_reasons():
     inputs = json.loads((DATA_DIR / "fixtures" / "bi_inputs.json").read_text(encoding="utf-8"))
     invalid = next(item for item in inputs if item["case_id"] == "OR-056")
@@ -110,15 +98,15 @@ def test_invalid_bi_case_is_blocked_before_any_interrupt():
 
 def test_pii_prompt_injection_and_stale_cases_are_gated_before_assessment():
     expectations = {
-        "OR-051": ("SECURITY_INPUT_ANOMALY", "ESCALATE_REVIEW", "ESCALATED"),
-        "OR-052": ("DATA_QUALITY_INVALID", "ESCALATE_REVIEW", "BLOCKED"),
-        "OR-055": ("DATA_QUALITY_INVALID", "NO_ACTION", "BLOCKED"),
+        "OR-051": ("ESCALATE_REVIEW", "ESCALATED"),
+        "OR-052": ("ESCALATE_REVIEW", "BLOCKED"),
+        "OR-055": ("NO_ACTION", "BLOCKED"),
     }
-    for case_id, (hypothesis, action, decision) in expectations.items():
+    for case_id, (action, decision) in expectations.items():
         graph = create_graph()
         result = graph.invoke(load_bi_case(case_id), config=thread_config(case_id))
 
-        assert result["assessment"].hypothesis.value == hypothesis
+        assert result["assessment"] is None
         assert result["final_recommendation"].action.value == action
         assert result["final_recommendation"].policy_decision.value == decision
         assert not result.get("__interrupt__")

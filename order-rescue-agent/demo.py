@@ -9,7 +9,6 @@ from langgraph.types import Command
 
 from agent.fixtures import load_bi_case, load_bi_event, load_or_001
 from agent.graph import create_graph, thread_config
-from agent.reasoning import DeepSeekReasoner
 
 
 def _show_assessment(assessment) -> None:
@@ -47,13 +46,11 @@ def main() -> None:
     parser.add_argument("--case", default="OR-001", help="BI case ID, for example OR-001 or OR-038.")
     parser.add_argument("--auto", action="store_true", help="Resume with the synthetic reply fixture after the graph pauses.")
     parser.add_argument("--reply", help="Supply a simulated buyer reply without prompting interactively.")
-    parser.add_argument("--llm", action="store_true", help="Use DeepSeek for both assessments; requires DEEPSEEK_API_KEY.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     initial = load_or_001() if args.case == "OR-001" else load_bi_case(args.case)
-    reasoner = DeepSeekReasoner() if args.llm else None
-    graph = create_graph(reasoner=reasoner)
+    graph = create_graph()
     config = thread_config(initial["case_id"])
 
     print(f"Order Rescue — synthetic BI case {initial['case_id']}")
@@ -61,10 +58,13 @@ def main() -> None:
     print(f"  Trigger: {initial['trigger_event']}")
     print(f"  Status: {initial['delivery_context'].delivery_status}")
     print(f"  Courier note: {initial['delivery_context'].courier_note}")
-    print(f"\nRunning initial assessment{' with DeepSeek' if args.llm else ''}...")
+    print("\nRunning initial assessment with DeepSeek...")
     initial_result = graph.invoke(initial, config=config)
     pending = graph.get_state(config).values
-    _show_assessment(pending["assessment"])
+    if pending.get("assessment") is not None:
+        _show_assessment(pending["assessment"])
+    else:
+        print("  AI assessment skipped by eligibility pre-check.")
     _show_decision(pending)
     if not initial_result.get("__interrupt__"):
         print("\nCase completed without requesting a new event.")
@@ -91,7 +91,6 @@ def main() -> None:
         waiting = graph.get_state(config).values
         _show_decision(waiting)
         print(f"\nThe case is waiting for another event: {waiting['information_request'].question}")
-        print(f"Current candidate: {waiting['proposed_action'].value}; policy: {waiting['recovery_policy_result'].decision.value}")
         return
     print("\nUpdated evidence:")
     for item in result["evidence"]:

@@ -3,16 +3,16 @@ from __future__ import annotations
 import logging
 import json
 import re
-import inspect
 from datetime import UTC, datetime
 from typing import Any
+from pydantic import ValidationError
 
 from langgraph.types import interrupt
 
 from .bi_adapter import validate_case_input
 from .events import EventType, execution_event, lifecycle_events
 from .policy import evaluate_bi_eligibility, evaluate_contact_policy, evaluate_recovery_policy
-from .reasoning import DecisionReasoner, Reasoner, mock_reasoner
+from .reasoning import DecisionReasoner
 from .schemas import (
     Action,
     AgentDecision,
@@ -27,6 +27,7 @@ from .schemas import (
     DecisionTarget,
     DeliveryContext,
     Evidence,
+    Eligibility,
     FinalRecommendation,
     Hypothesis,
     InformationRequest,
@@ -52,36 +53,66 @@ def validate_input(state: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     issues = list(result.issues)
-    preflight: tuple[Hypothesis, Action, PolicyDecision, str, str] | None = None
+    preflight: tuple[Action, PolicyDecision, str, str] | None = None
+    raw_event = state.get("case_event")
+    event: CaseEvent | None = None
+    if raw_event is not None:
+        try:
+            event = raw_event if isinstance(raw_event, CaseEvent) else CaseEvent.model_validate(raw_event)
+        except ValidationError:
+            issues.append("case_event")
+        else:
+            if event.case_id != state["case_id"]:
+                issues.append("case_event.case_id")
 
     extra = case.extra_context if isinstance(case, BiCaseInput) else {}
     note = (case.courier_note or "") if isinstance(case, BiCaseInput) else ""
-    if result.valid and extra.get("pii_detected") is True:
+    if issues and result.valid:
+        preflight = (
+            Action.ESCALATE_REVIEW,
+            PolicyDecision.BLOCKED, "R16", "The resumed event is invalid for this case.",
+        )
+    elif result.valid and extra.get("pii_detected") is True:
         issues = ["pii_detected"]
         preflight = (
-            Hypothesis.DATA_QUALITY_INVALID, Action.ESCALATE_REVIEW,
+            Action.ESCALATE_REVIEW,
             PolicyDecision.BLOCKED, "R15", "PII marker requires dropping this record before reasoning.",
         )
     elif result.valid and re.search(r"ignore all (?:previous )?rules|bỏ qua mọi quy tắc", note, re.I):
         issues = ["untrusted_instruction_in_case_data"]
         preflight = (
-            Hypothesis.SECURITY_INPUT_ANOMALY, Action.ESCALATE_REVIEW,
+            Action.ESCALATE_REVIEW,
             PolicyDecision.ESCALATED, "R19", "Instruction-like text is case data and is routed to human review.",
         )
     elif result.valid and (extra.get("duplicate_of") or extra.get("latest_status") in {"DELIVERED", "RETURNED"}):
         issues = ["duplicate_or_stale_event"]
         preflight = (
-            Hypothesis.DATA_QUALITY_INVALID, Action.NO_ACTION,
+            Action.NO_ACTION,
             PolicyDecision.BLOCKED, "R20", "Duplicate or stale input cannot create a new decision.",
         )
     elif not result.valid:
         preflight = (
-            Hypothesis.DATA_QUALITY_INVALID, Action.ESCALATE_REVIEW,
+            Action.ESCALATE_REVIEW,
             PolicyDecision.BLOCKED, "R16", "Required input is missing or outside the registered BI vocabulary.",
         )
+    elif isinstance(case, BiCaseInput):
+        eligibility = evaluate_bi_eligibility(case)
+        if eligibility is not Eligibility.ELIGIBLE:
+            rule_id = (
+                "R01" if case.return_state in {"started", "completed"} else
+                "R04" if case.attempts_remaining == 0 else
+                "R02" if eligibility is Eligibility.UNKNOWN else "R03"
+            )
+            preflight = (
+                Action.ESCALATE_REVIEW,
+                PolicyDecision.ESCALATED if eligibility is Eligibility.UNKNOWN else PolicyDecision.BLOCKED,
+                rule_id, "Eligibility pre-check requires Ops review before AI assessment.",
+            )
 
     events = [execution_event(state, "validate_input", EventType.NODE_STARTED)]
     update: dict[str, Any] = {"case_input": case, "input_issues": issues}
+    if event is not None:
+        update["case_event"] = event
     if context is not None:
         update["delivery_context"] = context
     if isinstance(case, BiCaseInput) and result.valid:
@@ -93,14 +124,7 @@ def validate_input(state: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(case, BiCaseInput):
         update["eligibility"] = "UNKNOWN"
     if preflight:
-        hypothesis, action, decision, rule_id, reason = preflight
-        assessment = Assessment(
-            hypothesis=hypothesis,
-            confidence=Confidence.HIGH,
-            missing_information=issues if hypothesis is Hypothesis.DATA_QUALITY_INVALID and not extra.get("pii_detected") and not extra.get("duplicate_of") else [],
-            evidence_refs=[],
-            summary=reason,
-        )
+        action, decision, rule_id, reason = preflight
         policy = PolicyResult(
             decision=decision,
             policy_version=(case.policy_version if isinstance(case, BiCaseInput) and case.policy_version else "DEMO-POLICY-0.1"),
@@ -108,7 +132,7 @@ def validate_input(state: dict[str, Any]) -> dict[str, Any]:
             triggering_rule_ids=[rule_id],
         )
         update.update({
-            "assessment": assessment,
+            "assessment": None,
             "missing_information": issues,
             "proposed_action": action,
             "recovery_policy_result": policy,
@@ -161,6 +185,16 @@ def build_evidence(state: dict[str, Any]) -> dict[str, Any]:
     raw_event = state.get("case_event")
     if raw_event is not None:
         event = raw_event if isinstance(raw_event, CaseEvent) else CaseEvent.model_validate(raw_event)
+        prior_request = state.get("information_request")
+        if prior_request is not None and state.get("event_target") == "BUYER":
+            incoming.append(Evidence(
+                evidence_id=f"{state['case_id']}:buyer-question:{state.get('questions_asked', 1)}",
+                kind="buyer_question",
+                value=prior_request.question,
+                provenance="simulated_agent_question",
+                timestamp=stamp,
+                raw_text=prior_request.question,
+            ))
         incoming.append(Evidence(
             evidence_id=f"{state['case_id']}:event:{event.event_type.value}:{state.get('iteration', 1)}",
             kind=event.event_type.value.lower(),
@@ -183,30 +217,25 @@ def build_evidence(state: dict[str, Any]) -> dict[str, Any]:
     return {"evidence": incoming, "events": lifecycle_events(state, "build_evidence")}
 
 
-def assess_case(state: dict[str, Any], reasoner: Reasoner | DecisionReasoner | None = None) -> dict[str, Any]:
-    selected_reasoner = reasoner or mock_reasoner
-    decision = state.get("llm_decision")
-    if decision is not None and decision.stage is DecisionStage.AFTER_EVENT:
-        assessment = decision.assessment
-    elif callable(getattr(selected_reasoner, "decide", None)):
-        decision = selected_reasoner.decide(
-            state["delivery_context"], state.get("evidence", []),
-            stage=DecisionStage.INITIAL, case_input=state.get("case_input"),
-        )
-        if not isinstance(decision, AgentDecision):
-            decision = AgentDecision.model_validate(decision)
-        if decision.stage is not DecisionStage.INITIAL:
-            raise ValueError("Initial decision stage did not match the graph stage.")
-        known_ids = {item.evidence_id for item in state.get("evidence", [])}
-        if not set(decision.evidence_refs + decision.assessment.evidence_refs) <= known_ids:
-            raise ValueError("Initial decision referenced evidence outside the current evidence pack.")
-        assessment = decision.assessment
-    elif "case_input" in inspect.signature(selected_reasoner.assess).parameters:
-        assessment = selected_reasoner.assess(
-            state["delivery_context"], state.get("evidence", []), case_input=state.get("case_input")
-        )
-    else:  # Preserve compatibility with simple injected V0 reasoners.
-        assessment = selected_reasoner.assess(state["delivery_context"], state.get("evidence", []))
+def assess_case(state: dict[str, Any], reasoner: DecisionReasoner | None = None) -> dict[str, Any]:
+    if reasoner is None:
+        raise ValueError("A configured LLM decision provider is required for eligible cases.")
+    event = state.get("case_event")
+    if event is not None and not isinstance(event, CaseEvent):
+        event = CaseEvent.model_validate(event)
+    stage = DecisionStage.AFTER_EVENT if event is not None else DecisionStage.INITIAL
+    decision = reasoner.decide(
+        state["delivery_context"], state.get("evidence", []),
+        stage=stage, case_input=state.get("case_input"), case_event=event,
+    )
+    if not isinstance(decision, AgentDecision):
+        decision = AgentDecision.model_validate(decision)
+    if decision.stage is not stage:
+        raise ValueError("Decision stage did not match the graph stage.")
+    known_ids = {item.evidence_id for item in state.get("evidence", [])}
+    if not set(decision.evidence_refs + decision.assessment.evidence_refs) <= known_ids:
+        raise ValueError("Decision referenced evidence outside the current evidence pack.")
+    assessment = decision.assessment
     logger.info(
         "[%s] Assessment: %s (%s), missing=%s",
         state["case_id"], assessment.hypothesis.value, assessment.confidence.value, assessment.missing_information,
@@ -225,9 +254,15 @@ def assess_case(state: dict[str, Any], reasoner: Reasoner | DecisionReasoner | N
         },
     ))
     events.append(execution_event(state, "assess_case", EventType.NODE_COMPLETED))
-    update = {"assessment": assessment, "missing_information": assessment.missing_information, "events": events}
-    if decision is not None:
-        update["llm_decision"] = decision
+    update = {
+        "assessment": assessment, "missing_information": assessment.missing_information,
+        "llm_decision": decision, "events": events,
+    }
+    if stage is DecisionStage.AFTER_EVENT:
+        update["delivery_context"] = state["delivery_context"].model_copy(
+            update={"buyer_intent": decision.buyer_intent or BuyerIntent.UNKNOWN}
+        )
+        update["parsed_facts"] = decision.parsed_facts
     return update
 
 
@@ -299,7 +334,7 @@ def plan_information(state: dict[str, Any]) -> dict[str, Any]:
             target = decision.target.value
             buyer_question_eligible = can_ask
             can_ask = decision.route is DecisionRoute.ASK and target == "BUYER" and buyer_question_eligible
-            should_wait = buyer_question_eligible if target == "BUYER" else needs_operational_event
+            should_wait = can_ask
     return {
         "should_ask_buyer": can_ask,
         "should_wait_event": should_wait,
@@ -382,30 +417,12 @@ def generate_question(state: dict[str, Any]) -> dict[str, Any]:
         {"from": CaseStatus.RUNNING.value, "to": (CaseStatus.WAITING_FOR_BUYER if target == "BUYER" else CaseStatus.WAITING_FOR_EVENT).value},
     ))
     events.append(execution_event(state, "generate_question", EventType.NODE_COMPLETED))
-    proposed = (
-        Action.HOLD_DISRUPTION if case and case.disruption_signal.get("flag") and case.disruption_signal.get("verified") and not state.get("should_ask_buyer")
-        else Action.ESCALATE_REVIEW if target == "SELLER" and case and any(item.get("outcome") == "invalid_number" for item in case.contact_evidence)
-        else Action.CLARIFY if target in {"BUYER", "SELLER"} else Action.HOLD_DISRUPTION if target == "OPS" else Action.ESCALATE_REVIEW
-    )
-    update: dict[str, Any] = {
+    return {
         "information_request": request,
-        "proposed_action": proposed,
         "questions_asked": state.get("questions_asked", 0) + (1 if target == "BUYER" else 0),
         "case_status": CaseStatus.WAITING_FOR_BUYER if target == "BUYER" else CaseStatus.WAITING_FOR_EVENT,
         "events": events,
     }
-    if case is not None:
-        from .policy import evaluate_bi_recovery_policy
-        policy = evaluate_bi_recovery_policy(
-            proposed, case, state["assessment"],
-            buyer_intent=state["delivery_context"].buyer_intent,
-            event=state.get("case_event"),
-        )
-        update["recovery_policy_result"] = policy
-        update["events"].append(execution_event(state, "generate_question", EventType.POLICY_EVALUATED, {
-            "stage": "recovery", **policy.model_dump(mode="json"),
-        }))
-    return update
 
 
 def wait_for_buyer(state: dict[str, Any]) -> dict[str, Any]:
@@ -418,159 +435,31 @@ def wait_for_buyer(state: dict[str, Any]) -> dict[str, Any]:
     })
     if isinstance(response, dict) and response.get("case_event"):
         event = response["case_event"]
-        return {"case_event": event, "buyer_reply": event.get("event_text", ""), "events": lifecycle_events(state, "wait_for_buyer")}
-    reply = response.get("text", "") if isinstance(response, dict) else str(response)
-    return {"buyer_reply": reply, "events": lifecycle_events(state, "wait_for_buyer")}
-
-
-def _classify_buyer_intent(reply: str) -> BuyerIntent:
-    normalized = re.sub(r"\s+", " ", reply.strip().lower())
-    negated_want = re.compile(
-        r"\b(?:i\s+)?(?:don't|do not|dont|no longer|never)\s+(?:want|need)"
-        r"(?:\s+(?:the\s+)?(?:delivery|order|it|this))?\b"
-    )
-    positive_text = negated_want.sub(" ", normalized)
-    wants_delivery = any(phrase in positive_text for phrase in (
-        "still want", "want delivery", "please deliver", "i want it", "yes, deliver", "mình vẫn muốn", "vẫn muốn nhận", "hãy giao",
-    ))
-    declines_delivery = bool(negated_want.search(normalized)) or any(phrase in normalized for phrase in (
-        "cancel", "no longer need", "không muốn nhận", "không cần nữa", "hủy đơn",
-    ))
-    if wants_delivery and not declines_delivery:
-        return BuyerIntent.WANTS_DELIVERY
-    if declines_delivery and not wants_delivery:
-        return BuyerIntent.DOES_NOT_WANT_DELIVERY
-    return BuyerIntent.UNKNOWN
-
-
-def parse_buyer_reply(state: dict[str, Any], reasoner: DecisionReasoner | None = None) -> dict[str, Any]:
-    if reasoner is not None and callable(getattr(reasoner, "decide", None)):
-        raw_event = state.get("case_event")
-        reply = (state.get("buyer_reply") or "").strip()
-        if isinstance(raw_event, CaseEvent):
-            event = raw_event
-        elif raw_event is not None:
-            event = CaseEvent.model_validate(raw_event)
-        else:
-            event = CaseEvent(
-                case_id=state["case_id"],
-                event_type=BiEventType.BUYER_REPLY if reply else BiEventType.NO_REPLY,
-                event_text=reply or None,
-                reply_received=bool(reply),
-            )
-        decision = reasoner.decide(
-            state["delivery_context"], state.get("evidence", []),
-            stage=DecisionStage.AFTER_EVENT, case_input=state.get("case_input"), case_event=event,
+        reply = event.get("event_text", "") if isinstance(event, dict) else ""
+    else:
+        reply = response.get("text", "") if isinstance(response, dict) else str(response)
+        event = CaseEvent(
+            case_id=state["case_id"],
+            event_type=BiEventType.BUYER_REPLY if reply.strip() else BiEventType.NO_REPLY,
+            event_text=reply or None,
+            reply_received=bool(reply.strip()),
         )
-        if not isinstance(decision, AgentDecision):
-            decision = AgentDecision.model_validate(decision)
-        known_ids = {item.evidence_id for item in state.get("evidence", [])}
-        if (
-            decision.stage is not DecisionStage.AFTER_EVENT
-            or decision.route is not DecisionRoute.PROPOSE_RECOVERY
-            or decision.buyer_intent is None
-            or not decision.parsed_facts
-            or any(not key.strip() or not value.strip() for key, value in decision.parsed_facts.items())
-            or decision.proposed_action is None
-            or not set(decision.evidence_refs + decision.assessment.evidence_refs) <= known_ids
-        ):
-            raise ValueError("After-event decision does not satisfy the graph contract.")
-        context = state["delivery_context"].model_copy(update={"buyer_intent": decision.buyer_intent})
-        stamp = datetime.now(UTC).isoformat()
-        evidence = [Evidence(
-            evidence_id=f"{state['case_id']}:parsed:{key}:{state.get('iteration', 1)}",
-            kind="parsed_event_fact", value=value,
-            provenance="structured_case_event_extraction", timestamp=stamp,
-            raw_text=event.event_text,
-        ) for key, value in decision.parsed_facts.items()]
-        resumed_state = {**state, "iteration": state.get("iteration", 1) + 1}
-        events = [execution_event(resumed_state, "parse_buyer_reply", EventType.NODE_STARTED)]
-        events.append(execution_event(resumed_state, "parse_buyer_reply", EventType.BUYER_REPLY_RECEIVED, {
-            "event_type": event.event_type.value, "intent": decision.buyer_intent.value,
-            "evidence_refs": [item.evidence_id for item in evidence],
-        }))
-        events.append(execution_event(resumed_state, "parse_buyer_reply", EventType.STATE_TRANSITION, {
-            "from": state.get("case_status", CaseStatus.WAITING_FOR_EVENT).value,
-            "to": CaseStatus.RUNNING.value,
-        }))
-        events.append(execution_event(resumed_state, "parse_buyer_reply", EventType.NODE_COMPLETED))
-        return {
-            "case_event": event,
-            "buyer_reply": event.event_text or reply,
-            "delivery_context": context,
-            "llm_decision": decision,
-            "parsed_facts": decision.parsed_facts,
-            "evidence": evidence,
-            "iteration": resumed_state["iteration"],
-            "case_status": CaseStatus.RUNNING,
-            "events": events,
-        }
-    raw_event = state.get("case_event")
-    if raw_event:
-        event = raw_event if isinstance(raw_event, CaseEvent) else CaseEvent.model_validate(raw_event)
-        intent = event.buyer_intent or BuyerIntent.UNKNOWN
-        reply = event.event_text or ""
-        context = state["delivery_context"].model_copy(update={"buyer_intent": intent})
-        evidence = Evidence(
-            evidence_id=f"{state['case_id']}:event:{event.event_type.value}:{state.get('iteration', 1)}",
-            kind=event.event_type.value.lower(),
-            value=reply or event.event_type.value,
-            provenance="simulated_bi_event",
-            timestamp=datetime.now(UTC).isoformat(),
-            raw_text=reply or None,
-        )
-        resumed_state = {**state, "iteration": state.get("iteration", 1) + 1}
-        events = [execution_event(resumed_state, "parse_buyer_reply", EventType.NODE_STARTED)]
-        events.append(execution_event(resumed_state, "parse_buyer_reply", EventType.BUYER_REPLY_RECEIVED, {
-            "event_type": event.event_type.value, "intent": intent.value,
-            "evidence_ref": evidence.evidence_id,
-        }))
-        events.append(execution_event(resumed_state, "parse_buyer_reply", EventType.STATE_TRANSITION, {
-            "from": state.get("case_status", CaseStatus.WAITING_FOR_EVENT).value,
-            "to": CaseStatus.RUNNING.value,
-        }))
-        events.append(execution_event(resumed_state, "parse_buyer_reply", EventType.NODE_COMPLETED))
-        return {
-            "case_event": event,
-            "buyer_reply": reply,
-            "delivery_context": context,
-            "evidence": [evidence],
-            "iteration": resumed_state["iteration"],
-            "case_status": CaseStatus.RUNNING,
-            "events": events,
-        }
-    reply = (state.get("buyer_reply") or "").strip()
-    intent = _classify_buyer_intent(reply)
-    context = state["delivery_context"].model_copy(update={"buyer_intent": intent})
-    evidence = Evidence(
-        evidence_id=f"{state['case_id']}:buyer-reply:{state.get('questions_asked', 1)}",
-        kind="buyer_intent",
-        value=intent.value,
-        provenance="simulated_buyer_reply",
-        timestamp=datetime.now(UTC).isoformat(),
-        raw_text=reply,
-    )
     resumed_state = {**state, "iteration": state.get("iteration", 1) + 1}
-    events = [execution_event(resumed_state, "parse_buyer_reply", EventType.NODE_STARTED)]
-    events.append(execution_event(
-        resumed_state,
-        "parse_buyer_reply",
-        EventType.BUYER_REPLY_RECEIVED,
-        {"intent": intent.value, "evidence_ref": evidence.evidence_id, "raw_reply": reply},
-    ))
-    events.append(execution_event(
-        resumed_state,
-        "parse_buyer_reply",
-        EventType.STATE_TRANSITION,
-        {"from": CaseStatus.WAITING_FOR_BUYER.value, "to": CaseStatus.RUNNING.value},
-    ))
-    events.append(execution_event(resumed_state, "parse_buyer_reply", EventType.NODE_COMPLETED))
-    logger.info("[%s] Simulated buyer reply parsed as %s.", state["case_id"], intent.value)
+    events = [execution_event(resumed_state, "wait_for_buyer", EventType.NODE_STARTED)]
+    events.append(execution_event(resumed_state, "wait_for_buyer", EventType.STATE_TRANSITION, {
+        "from": state.get("case_status", CaseStatus.WAITING_FOR_BUYER).value,
+        "to": CaseStatus.RUNNING.value,
+    }))
+    events.append(execution_event(resumed_state, "wait_for_buyer", EventType.NODE_COMPLETED))
     return {
-        "delivery_context": context,
-        "evidence": [evidence],
-        "iteration": resumed_state["iteration"],
+        "case_event": event,
+        "buyer_reply": reply or "",
         "case_status": CaseStatus.RUNNING,
+        "iteration": resumed_state["iteration"],
+        "llm_decision": None,
+        "proposed_action": None,
+        "contact_policy_result": None,
+        "recovery_policy_result": None,
         "events": events,
     }
 
@@ -584,6 +473,9 @@ def propose_recovery(state: dict[str, Any]) -> dict[str, Any]:
     if case and case.extra_context.get("duplicate_of"):
         action = Action.NO_ACTION
     elif contact_result and contact_result.decision is not PolicyDecision.PERMITTED:
+        action = Action.ESCALATE_REVIEW
+    elif (decision is not None and decision.route is DecisionRoute.PROPOSE_RECOVERY
+          and decision.proposed_action is Action.CLARIFY):
         action = Action.ESCALATE_REVIEW
     elif (decision is not None and decision.route is DecisionRoute.PROPOSE_RECOVERY
           and decision.proposed_action is not None and not assessment.missing_information):

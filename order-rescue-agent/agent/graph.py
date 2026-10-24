@@ -29,7 +29,7 @@ from .schemas import (
     ReturnState,
     RuleResult,
 )
-from .reasoning import DecisionReasoner, DeepSeekReasoner, Reasoner
+from .reasoning import DecisionReasoner, DeepSeekReasoner
 from .state import AgentState
 
 
@@ -38,12 +38,6 @@ def _after_planning(state: AgentState) -> str:
     if decision is not None:
         return "propose_recovery" if decision.route.value == "PROPOSE_RECOVERY" else "contact_policy_gate"
     return "contact_policy_gate" if state.get("should_wait_event") else "propose_recovery"
-
-
-def _after_evidence(state: AgentState) -> str:
-    return "parse_buyer_reply" if state.get("case_status") in {
-        CaseStatus.WAITING_FOR_BUYER, CaseStatus.WAITING_FOR_EVENT,
-    } else "assess_case"
 
 
 def _after_contact_policy(state: AgentState) -> str:
@@ -61,46 +55,36 @@ def _after_input_validation(state: AgentState) -> str:
 def create_graph(
     checkpointer: InMemorySaver | None = None,
     *,
-    reasoner: Reasoner | DecisionReasoner | None = None,
+    reasoner: DecisionReasoner | None = None,
     use_server_persistence: bool = False,
 ):
     """Compile the workflow with an in-memory checkpoint unless the server owns it."""
     builder = StateGraph(AgentState)
     builder.add_node("validate_input", nodes.validate_input)
     builder.add_node("build_evidence", nodes.build_evidence)
-    def selected_reasoner(config: RunnableConfig):
-        if reasoner is not None:
-            return reasoner
-        configurable = (config or {}).get("configurable", {})
-        if configurable.get("reasoning_mode", "mock") == "deepseek":
-            return DeepSeekReasoner()
-        return None
+    def selected_reasoner():
+        return reasoner if reasoner is not None else DeepSeekReasoner()
 
     def assessment_node(state: AgentState, config: RunnableConfig):
-        return nodes.assess_case(state, selected_reasoner(config))
+        return nodes.assess_case(state, selected_reasoner())
 
     builder.add_node("assess_case", assessment_node)
     builder.add_node("plan_information", nodes.plan_information)
     builder.add_node("contact_policy_gate", nodes.contact_policy_gate)
     builder.add_node("generate_question", nodes.generate_question)
     builder.add_node("wait_for_buyer", nodes.wait_for_buyer)
-    def parse_node(state: AgentState, config: RunnableConfig):
-        return nodes.parse_buyer_reply(state, selected_reasoner(config))
-
-    builder.add_node("parse_buyer_reply", parse_node)
     builder.add_node("propose_recovery", nodes.propose_recovery)
     builder.add_node("recovery_policy_gate", nodes.recovery_policy_gate)
     builder.add_node("finalize", nodes.finalize)
 
     builder.add_edge(START, "validate_input")
     builder.add_conditional_edges("validate_input", _after_input_validation)
-    builder.add_conditional_edges("build_evidence", _after_evidence)
+    builder.add_edge("build_evidence", "assess_case")
     builder.add_edge("assess_case", "plan_information")
     builder.add_conditional_edges("plan_information", _after_planning)
     builder.add_conditional_edges("contact_policy_gate", _after_contact_policy)
     builder.add_edge("generate_question", "wait_for_buyer")
-    builder.add_edge("wait_for_buyer", "build_evidence")
-    builder.add_edge("parse_buyer_reply", "assess_case")
+    builder.add_edge("wait_for_buyer", "validate_input")
     builder.add_edge("propose_recovery", "recovery_policy_gate")
     builder.add_edge("recovery_policy_gate", "finalize")
     builder.add_edge("finalize", END)
